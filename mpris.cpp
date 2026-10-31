@@ -19,7 +19,7 @@ static const KeyService keyServices[] = {
 static QString trackId(int index)
 {
     return index < 0 ? "/org/mpris/MediaPlayer2/TrackList/NoTrack"
-                     : "/org/newmpc_be/track/" + QString::number(index);
+                     : "/org/reelplay/track/" + QString::number(index);
 }
 
 Mpris::Mpris(Player *player) : QObject(player), player(player)
@@ -27,7 +27,7 @@ Mpris::Mpris(Player *player) : QObject(player), player(player)
     new MprisRoot(this);
     new MprisPlayer(this);
     QDBusConnection bus = QDBusConnection::sessionBus();
-    service = "org.mpris.MediaPlayer2.newmpc-be";
+    service = "org.mpris.MediaPlayer2.reelplay";
     if (!bus.registerService(service)) { // another instance already owns the plain name
         service += ".instance" + QString::number(QCoreApplication::applicationPid());
         bus.registerService(service);
@@ -42,7 +42,7 @@ void Mpris::grabMediaKeys()
 {
     for (const KeyService &k : keyServices) {
         QDBusMessage msg = QDBusMessage::createMethodCall(k.service, k.path, k.iface, "GrabMediaPlayerKeys");
-        msg << QString("newmpc-be") << 0u; // time 0 = now: become the newest grabber
+        msg << QString("reelplay") << 0u; // time 0 = now: become the newest grabber
         msg.setAutoStartService(false);
         QDBusConnection::sessionBus().call(msg, QDBus::NoBlock); // absent daemons just error out
     }
@@ -50,7 +50,7 @@ void Mpris::grabMediaKeys()
 
 void Mpris::mediaPlayerKeyPressed(const QString &application, const QString &key)
 {
-    if (application != "newmpc-be")
+    if (application != "reelplay")
         return; // the signal is broadcast; it's for whichever app grabbed last
     Player *p = player;
     if (key == "Play")
@@ -74,7 +74,7 @@ Mpris::~Mpris()
     QDBusConnection bus = QDBusConnection::sessionBus();
     for (const KeyService &k : keyServices) {
         QDBusMessage msg = QDBusMessage::createMethodCall(k.service, k.path, k.iface, "ReleaseMediaPlayerKeys");
-        msg << QString("newmpc-be");
+        msg << QString("reelplay");
         msg.setAutoStartService(false);
         bus.call(msg, QDBus::NoBlock);
     }

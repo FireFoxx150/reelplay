@@ -14,13 +14,20 @@ class QAction;
 class QTimer;
 class Mpris;
 
+double parseTime(const QString &text); // "1:23:45", "83:45", "45.5" -> seconds; -1 if invalid
+
 class Player : public QMainWindow
 {
     Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.reelplay.Player")
 public:
     Player();
     ~Player() override;
     void openFiles(const QStringList &files, bool append = false);
+
+public slots:
+    // Called over D-Bus by a second launch (single window mode).
+    Q_SCRIPTABLE void openFromOtherInstance(const QStringList &files);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *ev) override;
@@ -38,6 +45,9 @@ private:
     void togglePause();
     void skipFile(int dir);
     bool canSkip(int dir);
+    void readChapters();
+    void updateChapterMarks();
+    void rebuildChapterMenu();
     void play();
     void pause();
     void stop();
@@ -65,11 +75,12 @@ private:
     QLabel *timeLabel, *statusLabel;
     QListWidget *playlist;
     QDockWidget *dock;
-    QMenu *audioMenu, *subMenu, *contextMenu, *recentMenu;
+    QMenu *audioMenu, *subMenu, *contextMenu, *recentMenu, *chapterMenu;
     QAction *muteAct;
     QTimer *clickTimer, *idleTimer;
     Mpris *mpris = nullptr;
     int current = -1;
+    QList<double> chapters; // start times in seconds
     QString folderNeighbors[2]; // previous/next file in the folder of a lone playlist entry
     double duration = 0;
     bool stopped = true;

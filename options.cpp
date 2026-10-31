@@ -2,15 +2,18 @@
 #include "player.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFontComboBox>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QKeySequenceEdit>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QTabWidget>
@@ -60,6 +63,11 @@ void Player::applySettings()
     mpv_set_property_string(mpv, "hwdec", s.value("hwdec", "no").toString().toUtf8().constData());
     mpv_set_property_string(mpv, "alang", s.value("alang").toString().toUtf8().constData());
     mpv_set_property_string(mpv, "slang", s.value("slang").toString().toUtf8().constData());
+    if (s.contains("subFont"))
+        mpv_set_property_string(mpv, "sub-font", s.value("subFont").toString().toUtf8().constData());
+    mpv_set_property_string(mpv, "sub-font-size", s.value("subSize", 55).toString().toUtf8().constData());
+    mpv_set_property_string(mpv, "sub-color", s.value("subColor", "#ffffff").toString().toUtf8().constData());
+    mpv_set_property_string(mpv, "sub-pos", s.value("subPos", 100).toString().toUtf8().constData());
     applyTheme(s.value("darkTheme", true).toBool());
     for (QAction *a : hotkeyActions(this))
         a->setShortcut(s.value("keys/" + a->objectName(), a->property("defaultKey")).value<QKeySequence>());
@@ -86,7 +94,7 @@ void Player::openOptions()
     slang->setPlaceholderText("e.g. eng");
     auto *shotDir = new QLineEdit(s.value("screenshotDir").toString());
     shotDir->setObjectName("screenshotDir");
-    shotDir->setPlaceholderText(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + "/newmpc-be");
+    shotDir->setPlaceholderText(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + "/reelplay");
     auto *dark = new QCheckBox("Dark theme");
     dark->setObjectName("darkTheme");
     dark->setChecked(s.value("darkTheme", true).toBool());
@@ -95,6 +103,48 @@ void Player::openOptions()
     form->addRow("Preferred subtitle language:", slang);
     form->addRow("Screenshot folder:", shotDir);
     form->addRow(dark);
+    auto *single = new QCheckBox("Use a single window (opening a file replaces what's playing; next launch)");
+    single->setObjectName("singleInstance");
+    single->setChecked(s.value("singleInstance", true).toBool());
+    auto *autoNext = new QCheckBox("When a file ends, play the next file in its folder");
+    autoNext->setObjectName("autoNext");
+    autoNext->setChecked(s.value("autoNext", false).toBool());
+    form->addRow(single);
+    form->addRow(autoNext);
+
+    auto *subsPage = new QWidget;
+    auto *subsForm = new QFormLayout(subsPage);
+    auto *subFont = new QFontComboBox;
+    subFont->setObjectName("subFont");
+    if (s.contains("subFont"))
+        subFont->setCurrentFont(QFont(s.value("subFont").toString()));
+    const QString shownFont = subFont->currentFont().family(); // save only if changed
+    auto *subSize = new QSpinBox;
+    subSize->setObjectName("subSize");
+    subSize->setRange(10, 150);
+    subSize->setValue(s.value("subSize", 55).toInt());
+    auto *subColor = new QPushButton;
+    subColor->setObjectName("subColor");
+    auto showColor = [subColor](const QString &c) {
+        subColor->setProperty("color", c);
+        subColor->setText(c);
+        subColor->setStyleSheet(QString("background: %1; color: %2").arg(c, QColor(c).lightness() > 128 ? "black" : "white"));
+    };
+    showColor(s.value("subColor", "#ffffff").toString());
+    connect(subColor, &QPushButton::clicked, &d, [&d, subColor, showColor] {
+        QColor c = QColorDialog::getColor(QColor(subColor->property("color").toString()), &d, "Subtitle Color");
+        if (c.isValid())
+            showColor(c.name());
+    });
+    auto *subPos = new QSpinBox;
+    subPos->setObjectName("subPos");
+    subPos->setRange(0, 150);
+    subPos->setSuffix(" %");
+    subPos->setValue(s.value("subPos", 100).toInt());
+    subsForm->addRow("Font:", subFont);
+    subsForm->addRow("Size:", subSize);
+    subsForm->addRow("Color:", subColor);
+    subsForm->addRow("Vertical position (100 = bottom):", subPos);
 
     auto *keysPage = new QWidget;
     auto *keysLay = new QVBoxLayout(keysPage);
@@ -123,6 +173,7 @@ void Player::openOptions()
 
     auto *tabs = new QTabWidget;
     tabs->addTab(general, "Player");
+    tabs->addTab(subsPage, "Subtitles");
     tabs->addTab(keysPage, "Keys");
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &d, &QDialog::accept);
@@ -141,6 +192,13 @@ void Player::openOptions()
     else
         s.setValue("screenshotDir", shotDir->text().trimmed());
     s.setValue("darkTheme", dark->isChecked());
+    s.setValue("singleInstance", single->isChecked());
+    s.setValue("autoNext", autoNext->isChecked());
+    if (subFont->currentFont().family() != shownFont)
+        s.setValue("subFont", subFont->currentFont().family());
+    s.setValue("subSize", subSize->value());
+    s.setValue("subColor", subColor->property("color").toString());
+    s.setValue("subPos", subPos->value());
     for (int r = 0; r < actions.size(); ++r) {
         // QKeySequenceEdit can record chords; hotkeys use only the first key.
         QKeySequence seq = edits[r]->keySequence().isEmpty() ? QKeySequence() : QKeySequence(edits[r]->keySequence()[0]);

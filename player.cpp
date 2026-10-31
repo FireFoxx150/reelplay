@@ -19,6 +19,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPainter>
 #include <QProxyStyle>
 #include <QRegularExpression>
 #include <QUrl>
@@ -38,6 +39,25 @@ struct JumpStyle : QProxyStyle {
     int styleHint(StyleHint h, const QStyleOption *o, const QWidget *w, QStyleHintReturn *r) const override
     {
         return h == SH_Slider_AbsoluteSetButtons ? Qt::LeftButton : QProxyStyle::styleHint(h, o, w, r);
+    }
+};
+
+// Seek bar with chapter tick marks above and below the groove, like MPC-BE's.
+struct ChapterSlider : QSlider {
+    using QSlider::QSlider;
+    QList<int> marks; // in slider units
+    void paintEvent(QPaintEvent *e) override
+    {
+        QSlider::paintEvent(e);
+        if (marks.isEmpty() || maximum() <= minimum())
+            return;
+        QPainter p(this);
+        p.setPen(palette().color(QPalette::WindowText));
+        for (int m : marks) {
+            int x = QStyle::sliderPositionFromValue(minimum(), maximum(), m, width());
+            p.drawLine(x, 0, x, 3);
+            p.drawLine(x, height() - 4, x, height() - 1);
+        }
     }
 };
 
@@ -135,7 +155,7 @@ static QString fmtTime(double s)
 
 Player::Player()
 {
-    setWindowTitle("newmpc-be");
+    setWindowTitle("Reelplay");
     setAcceptDrops(true);
 
     mpv = mpv_create();
@@ -144,8 +164,8 @@ Player::Player()
 
     // Wayland can't embed another process's window, so draw through the render API there.
     // On X11 keep embedding: a QOpenGLWidget costs 0.5-1 s of GL setup before the window
-    // even appears (measured on NVIDIA). NEWMPC_RENDER=gl forces the render API for testing.
-    if (QGuiApplication::platformName() == "wayland" || qgetenv("NEWMPC_RENDER") == "gl") {
+    // even appears (measured on NVIDIA). REELPLAY_RENDER=gl forces the render API for testing.
+    if (QGuiApplication::platformName() == "wayland" || qgetenv("REELPLAY_RENDER") == "gl") {
         video = glVideo = new VideoWidget(mpv);
     } else {
         video = new QWidget;
@@ -176,7 +196,7 @@ Player::Player()
     });
 
     // Control bar under the video, MPC-style: seek bar on top, buttons + volume below.
-    seekBar = new QSlider(Qt::Horizontal);
+    seekBar = new ChapterSlider(Qt::Horizontal);
     seekBar->setFocusPolicy(Qt::NoFocus);
     seekBar->setEnabled(false);
     auto *jump = new JumpStyle;
@@ -358,6 +378,17 @@ Player::Player()
     act(play, "Jump Backward", QKeySequence("Left"), [this] { command({"seek", "-5"}); });
     act(play, "Jump Forward (large)", QKeySequence("Shift+Right"), [this] { command({"seek", "30"}); });
     act(play, "Jump Backward (large)", QKeySequence("Shift+Left"), [this] { command({"seek", "-30"}); });
+    act(play, "&Go To...", QKeySequence("Ctrl+G"), [this] {
+        if (stopped) return;
+        bool ok;
+        QString t = QInputDialog::getText(this, "Go To", "Time (hh:mm:ss):", QLineEdit::Normal,
+                                          fmtTime(prop("time-pos").toDouble()), &ok);
+        double secs = parseTime(t);
+        if (ok && secs >= 0)
+            command({"seek", QByteArray::number(secs), "absolute"});
+        else if (ok)
+            statusBar()->showMessage("Invalid time: " + t, 3000);
+    });
     play->addSeparator();
     QMenu *speed = play->addMenu("Playback &Rate");
     act(speed, "&Increase", QKeySequence("Ctrl+Up"), [this] { osd(QString::asprintf("Speed: %.2fx", step("speed", 0.1, 0.25, 4))); });
@@ -389,6 +420,10 @@ Player::Player()
     play->addSeparator();
     act(play, "Next File", QKeySequence("PgDown"), [this] { skipFile(1); });
     act(play, "Previous File", QKeySequence("PgUp"), [this] { skipFile(-1); });
+    chapterMenu = play->addMenu("C&hapters");
+    connect(chapterMenu, &QMenu::aboutToShow, this, &Player::rebuildChapterMenu);
+    act(play, "Next Chapter", QKeySequence("Ctrl+PgDown"), [this] { command({"add", "chapter", "1"}); });
+    act(play, "Previous Chapter", QKeySequence("Ctrl+PgUp"), [this] { command({"add", "chapter", "-1"}); });
     play->addSeparator();
     audioMenu = play->addMenu("&Audio Track");
     subMenu = play->addMenu("S&ubtitle Track");
@@ -401,7 +436,7 @@ Player::Player()
 
     QMenu *help = menuBar()->addMenu("&Help");
     act(help, "&About...", QKeySequence(), [this] {
-        QMessageBox::about(this, "About", QString("newmpc-be\nMPC-BE-style player on Qt %1 + libmpv").arg(qVersion()));
+        QMessageBox::about(this, "About", QString("Reelplay\nClassic-style media player on Qt %1 + libmpv").arg(qVersion()));
     });
 
     // Right-click on the video: the full menu, like MPC-BE.
@@ -419,6 +454,9 @@ Player::Player()
     mpv_set_option_string(mpv, "idle", "yes");
     mpv_set_option_string(mpv, "input-default-bindings", "no");
     mpv_set_option_string(mpv, "osc", "no");
+    // Load subtitles whose name contains the video's, also from Subs/ etc., like MPC-BE.
+    mpv_set_option_string(mpv, "sub-auto", "fuzzy");
+    mpv_set_option_string(mpv, "sub-file-paths", "Subs:subs:Subtitles:subtitles:Sub:sub");
     mpv_set_option_string(mpv, "ytdl", "yes"); // YouTube & co. via yt-dlp, like VLC's lua scripts
     // Resume where each file was left off; our own dir so we don't mix with the mpv CLI.
     QByteArray watchDir = (QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/watch_later").toUtf8();
@@ -451,6 +489,7 @@ Player::Player()
     mpv_observe_property(mpv, 0, "volume", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv, 0, "mute", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv, 0, "track-list", MPV_FORMAT_NONE);
+    mpv_observe_property(mpv, 0, "chapter-list", MPV_FORMAT_NONE);
 
     // mpv wakes us from its own thread; hop to the GUI thread to drain events.
     mpv_set_wakeup_callback(mpv, [](void *ctx) {
@@ -574,7 +613,7 @@ QString Player::propertiesText()
 QString Player::autoScreenshotPath()
 {
     QString dir = QSettings().value("screenshotDir",
-        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + "/newmpc-be").toString();
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + "/reelplay").toString();
     QString base = QFileInfo(prop("filename")).completeBaseName();
     QString at = fmtTime(prop("time-pos").toDouble()).replace(':', '.');
     return dir + "/" + base + "_" + at + "_" + QDateTime::currentDateTime().toString("hhmmsszzz") + ".png";
@@ -724,7 +763,71 @@ void Player::playIndex(int i)
             folderNeighbors[1] = fi.dir().filePath(names[k + 1]);
     }
     command({"set", "pause", "no"});
-    setWindowTitle(playlist->item(i)->text() + " - newmpc-be");
+    setWindowTitle(playlist->item(i)->text() + " - Reelplay");
+}
+
+double parseTime(const QString &text)
+{
+    QStringList parts = text.trimmed().split(':');
+    if (parts.size() > 3)
+        return -1;
+    double t = 0;
+    for (const QString &part : parts) {
+        bool ok;
+        double v = part.toDouble(&ok);
+        if (!ok || v < 0)
+            return -1;
+        t = t * 60 + v;
+    }
+    return t;
+}
+
+void Player::openFromOtherInstance(const QStringList &files)
+{
+    if (!files.isEmpty())
+        openFiles(files);
+    if (isMinimized())
+        showNormal();
+    raise();
+    activateWindow();
+}
+
+void Player::readChapters()
+{
+    chapters.clear();
+    int n = prop("chapter-list/count").toInt();
+    for (int i = 0; i < n; ++i)
+        chapters << prop(QByteArray("chapter-list/") + QByteArray::number(i) + "/time").toDouble();
+    updateChapterMarks();
+}
+
+void Player::updateChapterMarks()
+{
+    QList<int> marks;
+    if (duration > 0)
+        for (double t : chapters)
+            if (t > 0)
+                marks << int(t * 10);
+    static_cast<ChapterSlider *>(seekBar)->marks = marks;
+    seekBar->update();
+}
+
+void Player::rebuildChapterMenu()
+{
+    chapterMenu->clear();
+    if (chapters.isEmpty()) {
+        chapterMenu->addAction("No chapters")->setEnabled(false);
+        return;
+    }
+    int now = prop("chapter").toInt();
+    for (int i = 0; i < chapters.size(); ++i) {
+        QString title = prop(QByteArray("chapter-list/") + QByteArray::number(i) + "/title");
+        QAction *a = chapterMenu->addAction(QString("%1. %2 (%3)").arg(i + 1)
+            .arg(title.isEmpty() ? QString("Chapter %1").arg(i + 1) : title, fmtTime(chapters[i])));
+        a->setCheckable(true);
+        a->setChecked(i == now);
+        connect(a, &QAction::triggered, this, [this, i] { command({"set", "chapter", QByteArray::number(i)}); });
+    }
 }
 
 void Player::play()
@@ -846,6 +949,8 @@ void Player::handleEvents()
             QByteArray name = p->name;
             if (name == "track-list") {
                 rebuildTrackMenus();
+            } else if (name == "chapter-list") {
+                readChapters();
             } else if (p->format == MPV_FORMAT_NONE) {
                 continue; // property unavailable (e.g. nothing loaded)
             } else if (name == "time-pos") {
@@ -854,6 +959,7 @@ void Player::handleEvents()
                 duration = *static_cast<double *>(p->data);
                 seekBar->setRange(0, int(duration * 10));
                 seekBar->setEnabled(duration > 0);
+                updateChapterMarks();
             } else if (name == "pause") {
                 if (!stopped)
                     statusLabel->setText(*static_cast<int *>(p->data) ? "Paused" : "Playing");
@@ -876,6 +982,8 @@ void Player::handleEvents()
                     playIndex(current + 1);
                 else if (repeat == RepeatPlaylist && e->reason == MPV_END_FILE_REASON_EOF)
                     playIndex(0);
+                else if (e->reason == MPV_END_FILE_REASON_EOF && QSettings().value("autoNext", false).toBool() && canSkip(1))
+                    skipFile(1); // lone file: carry on with the next one in its folder
                 else
                     stop();
             }

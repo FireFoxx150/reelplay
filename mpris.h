@@ -42,14 +42,15 @@ class MprisRoot : public QDBusAbstractAdaptor
     Q_PROPERTY(bool CanRaise READ yes)
     Q_PROPERTY(bool HasTrackList READ no)
     Q_PROPERTY(QString Identity READ identity)
-    Q_PROPERTY(QString DesktopEntry READ identity)
+    Q_PROPERTY(QString DesktopEntry READ desktopEntry)
     Q_PROPERTY(QStringList SupportedUriSchemes READ schemes)
     Q_PROPERTY(QStringList SupportedMimeTypes READ mimeTypes)
 public:
     explicit MprisRoot(Mpris *m) : QDBusAbstractAdaptor(m), m(m) {}
     bool yes() const { return true; }
     bool no() const { return false; }
-    QString identity() const { return "newmpc-be"; }
+    QString identity() const { return "Reelplay"; }
+    QString desktopEntry() const { return "reelplay"; }
     QStringList schemes() const;
     QStringList mimeTypes() const;
 public slots:

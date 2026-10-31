@@ -17,6 +17,11 @@
 #include <QContextMenuEvent>
 #include <QTemporaryDir>
 #include <QProcess>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QFontComboBox>
+#include <QSpinBox>
+#include <QInputDialog>
 #include <clocale>
 #include "../player.h"
 #include "../mpris.h"
@@ -733,8 +738,8 @@ private slots:
 
     void mprisRegistered()
     {
-        QVERIFY2(p->mpris->serviceName().startsWith("org.mpris.MediaPlayer2.newmpc-be"), qPrintable(p->mpris->serviceName()));
-        QCOMPARE(mprisGet("Identity", "org.mpris.MediaPlayer2"), QString("(<'newmpc-be'>,)"));
+        QVERIFY2(p->mpris->serviceName().startsWith("org.mpris.MediaPlayer2.reelplay"), qPrintable(p->mpris->serviceName()));
+        QCOMPARE(mprisGet("Identity", "org.mpris.MediaPlayer2"), QString("(<'Reelplay'>,)"));
         QCOMPARE(mprisGet("PlaybackStatus"), QString("(<'Stopped'>,)"));
         QCOMPARE(mprisGet("CanControl"), QString("(<true>,)"));
     }
@@ -756,7 +761,7 @@ private slots:
         mpris("Previous");
         QTRY_COMPARE(p->current, 0);
         QTRY_VERIFY_WITH_TIMEOUT(pos() >= 0 && !p->prop("time-pos").isEmpty(), 5000);
-        QString r = mpris("SetPosition", {"'/org/newmpc_be/track/0'", "30000000"});
+        QString r = mpris("SetPosition", {"'/org/reelplay/track/0'", "30000000"});
         QVERIFY2(r == "()", qPrintable(r));
         QTRY_VERIFY(qAbs(pos() - 30) < 1);
         mpris("Seek", {"int64 -10000000"}); // a bare "-1..." would be read as a gdbus option
@@ -774,7 +779,7 @@ private slots:
         QTRY_VERIFY(p->duration > 0);
         QString meta = mprisGet("Metadata");
         QVERIFY2(meta.contains("'xesam:title': <'a.mkv'>"), qPrintable(meta));
-        QVERIFY2(meta.contains("'mpris:trackid': <objectpath '/org/newmpc_be/track/0'>"), qPrintable(meta));
+        QVERIFY2(meta.contains("'mpris:trackid': <objectpath '/org/reelplay/track/0'>"), qPrintable(meta));
         QVERIFY2(meta.contains("'mpris:length': <int64 60"), qPrintable(meta));
         QVERIFY2(meta.contains("'xesam:url': <'file://"), qPrintable(meta));
     }
@@ -822,17 +827,17 @@ private slots:
         p->mpris->mediaPlayerKeyPressed("some-other-app", "Play"); // broadcast for another grabber
         QTest::qWait(300);
         QCOMPARE(status(), QString("Playing"));
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Play");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Play");
         QTRY_COMPARE(status(), QString("Paused"));
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Play");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Play");
         QTRY_COMPARE(status(), QString("Playing"));
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Pause");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Pause");
         QTRY_COMPARE(status(), QString("Paused"));
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Next");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Next");
         QCOMPARE(p->current, 1);
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Previous");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Previous");
         QCOMPARE(p->current, 0);
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Stop");
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Stop");
         QTRY_COMPARE(status(), QString("Stopped"));
     }
 
@@ -855,7 +860,7 @@ private slots:
         QTRY_COMPARE(mprisGet("CanGoNext"), QString("(<false>,)"));
         key("PgDown"); // last file: stays
         QCOMPARE(playing(), QString("ep10.mkv"));
-        p->mpris->mediaPlayerKeyPressed("newmpc-be", "Previous"); // keyboard media key
+        p->mpris->mediaPlayerKeyPressed("reelplay", "Previous"); // keyboard media key
         QCOMPARE(playing(), QString("ep2.mkv"));
         mpris("Previous");
         QTRY_COMPARE(playing(), QString("ep1.mkv"));
@@ -864,13 +869,174 @@ private slots:
         QCOMPARE(playing(), QString("ep1.mkv"));
         QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
     }
+
+    void parseTimeFormats()
+    {
+        QCOMPARE(parseTime("1:23:45"), 5025.0);
+        QCOMPARE(parseTime(" 83:45 "), 5025.0);
+        QCOMPARE(parseTime("45"), 45.0);
+        QCOMPARE(parseTime("1:30.5"), 90.5);
+        QCOMPARE(parseTime(""), -1.0);
+        QCOMPARE(parseTime("1:2:3:4"), -1.0);
+        QCOMPARE(parseTime("abc"), -1.0);
+        QCOMPARE(parseTime("-5"), -1.0);
+    }
+
+    void goToTime()
+    {
+        startClips();
+        key("Space");
+        QTRY_COMPARE(status(), QString("Paused"));
+        onModal([](QDialog *d) {
+            QCOMPARE(d->findChild<QLineEdit *>()->text().left(6), QString("00:00:"));
+            d->findChild<QLineEdit *>()->setText("0:00:42");
+            d->accept();
+        });
+        key("Ctrl+G");
+        QTRY_VERIFY(qAbs(pos() - 42) < 0.5);
+        QVERIFY(QTest::qWaitForWindowActive(p));
+        onModal([](QDialog *d) { d->findChild<QLineEdit *>()->setText("nonsense"); d->accept(); });
+        key("Ctrl+G");
+        QTest::qWait(200);
+        QVERIFY(qAbs(pos() - 42) < 0.5); // invalid input doesn't seek
+    }
+
+    void chapters()
+    {
+        // An mpv EDL of two segments: each segment is a chapter (at 0 s and 60 s).
+        QString edl = writeFile("chapters.edl", "# mpv EDL v0\n" + clipA.toUtf8() + "\n" + clipB.toUtf8() + "\n");
+        p->openFiles({edl});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_COMPARE(p->chapters.size(), 2);
+        QCOMPARE(p->chapters[0], 0.0);
+        QVERIFY(qAbs(p->chapters[1] - 60) < 0.5);
+        emit p->chapterMenu->aboutToShow();
+        QCOMPARE(p->chapterMenu->actions().size(), 2);
+        QVERIFY(p->chapterMenu->actions()[0]->isChecked());
+        QVERIFY2(p->chapterMenu->actions()[1]->text().endsWith("(00:01:00)"), qPrintable(p->chapterMenu->actions()[1]->text()));
+        key("Ctrl+PgDown");
+        QTRY_VERIFY(pos() >= 59.5);
+        key("Ctrl+PgUp"); // back to the start of chapter 2's... previous = chapter 1
+        QTRY_VERIFY(pos() < 30);
+        p->chapterMenu->actions()[1]->trigger(); // stale action list still works
+        QTRY_VERIFY(pos() >= 59.5);
+        p->openFiles({clipA}); // a file without chapters
+        QTRY_COMPARE(p->chapters.size(), 0);
+        emit p->chapterMenu->aboutToShow();
+        QCOMPARE(p->chapterMenu->actions().first()->text(), QString("No chapters"));
+    }
+
+    void autoNextInFolder()
+    {
+        QDir d(tmp.filePath("autonext"));
+        d.mkpath(".");
+        QFile::copy(clipA, d.filePath("ep1.mkv"));
+        QFile::copy(clipA, d.filePath("ep2.mkv"));
+        auto playing = [this] { return p->playlist->count() ? p->playlist->item(0)->text() : QString(); };
+
+        p->openFiles({d.filePath("ep1.mkv")}); // off by default: stops at the end
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"seek", "59", "absolute"});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Stopped"), 8000);
+        QCOMPARE(playing(), QString("ep1.mkv"));
+
+        QSettings().setValue("autoNext", true);
+        p->openFiles({d.filePath("ep1.mkv")});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"seek", "59", "absolute"});
+        QTRY_COMPARE_WITH_TIMEOUT(playing(), QString("ep2.mkv"), 8000);
+        QTRY_VERIFY_WITH_TIMEOUT(pos() > 0 && pos() < 30, 5000); // ep2 really started
+        QCOMPARE(status(), QString("Playing"));
+        p->command({"seek", "59", "absolute"}); // last in folder: stops
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Stopped"), 8000);
+    }
+
+    void subtitleOptions()
+    {
+        startClips();
+        QString font;
+        onModal([&font](QDialog *d) {
+            auto *combo = d->findChild<QFontComboBox *>("subFont");
+            combo->setCurrentIndex(combo->count() > 1 ? 1 : 0);
+            font = combo->currentFont().family();
+            d->findChild<QSpinBox *>("subSize")->setValue(70);
+            d->findChild<QSpinBox *>("subPos")->setValue(90);
+            d->findChild<QPushButton *>("subColor")->setProperty("color", "#ffff00");
+            d->accept();
+        });
+        trigger("&Options...");
+        QCOMPARE(p->prop("sub-font"), font);
+        QCOMPARE(p->prop("sub-font-size").toDouble(), 70.0);
+        QCOMPARE(p->prop("sub-pos").toDouble(), 90.0);
+        QVERIFY2(p->prop("sub-color").contains("FFFF00", Qt::CaseInsensitive), qPrintable(p->prop("sub-color")));
+        p->close();
+        newPlayer(); // remembered
+        QCOMPARE(p->prop("sub-font-size").toDouble(), 70.0);
+        QCOMPARE(p->prop("sub-font"), font);
+    }
+
+    void subtitlesFromSubsFolder()
+    {
+        QDir d(tmp.filePath("movie"));
+        d.mkpath("Subs");
+        QFile::copy(clipA, d.filePath("film.mkv"));
+        writeFile("movie/Subs/film.en.srt", "1\n00:00:00,000 --> 00:00:50,000\nHello\n\n");
+        p->openFiles({d.filePath("film.mkv")});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_COMPARE(p->subMenu->actions().size(), 2); // "Disabled" + film.en.srt
+    }
+
+    // Launch the real program twice: the second hands its file to the first and exits.
+    void singleInstance()
+    {
+        QDBusConnectionInterface *bus = QDBusConnection::sessionBus().interface();
+        if (bus->isServiceRegistered("org.reelplay.Instance"))
+            QSKIP("reelplay is already running on this desktop");
+        QTemporaryDir home;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("XDG_CONFIG_HOME", home.filePath("config"));
+        env.insert("XDG_DATA_HOME", home.filePath("data"));
+        QProcess first;
+        first.setProcessEnvironment(env);
+        first.start(REELPLAY_BIN, {clipA});
+        QVERIFY(first.waitForStarted());
+        QTRY_VERIFY_WITH_TIMEOUT(bus->isServiceRegistered("org.reelplay.Instance"), 10000);
+
+        QProcess second;
+        second.setProcessEnvironment(env);
+        second.setWorkingDirectory(tmp.path());
+        second.start(REELPLAY_BIN, {"b.mkv"}); // relative: must be resolved by the sender
+        QVERIFY(second.waitForFinished(8000));
+        QCOMPARE(second.exitCode(), 0);
+
+        // The first window now plays b.mkv: ask its MPRIS interface.
+        QString name;
+        for (const QString &n : bus->registeredServiceNames().value())
+            if (n.startsWith("org.mpris.MediaPlayer2.reelplay") && bus->servicePid(n).value() == uint(first.processId()))
+                name = n;
+        QVERIFY(!name.isEmpty());
+        QString meta;
+        QTRY_VERIFY_WITH_TIMEOUT((meta = runGdbus(name)).contains("'xesam:title': <'b.mkv'>"), 5000);
+        first.terminate();
+        if (!first.waitForFinished(5000))
+            first.kill();
+    }
+
+    QString runGdbus(const QString &dest)
+    {
+        QProcess proc;
+        proc.start("gdbus", {"call", "--session", "--dest", dest, "--object-path", "/org/mpris/MediaPlayer2", "--method",
+                             "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player", "Metadata"});
+        proc.waitForFinished(3000);
+        return proc.readAllStandardOutput();
+    }
 };
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    app.setApplicationName("newmpc-be-test");
-    app.setOrganizationName("newmpc-be-test");
+    app.setApplicationName("reelplay-test");
+    app.setOrganizationName("reelplay-test");
     PlayerTest t;
     return QTest::qExec(&t, argc, argv);
 }

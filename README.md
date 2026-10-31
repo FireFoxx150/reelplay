@@ -1,24 +1,38 @@
-# newmpc-be
+# Reelplay
 
-MPC-BE-style media player for Linux on Qt 6 + libmpv (X11).
+Classic-style media player for Linux on Qt 6 + libmpv, inspired by MPC-BE.
+(Formerly newmpc-be; not affiliated with the MPC-BE project.)
 
 ## Build
 
 ```bash
 sudo apt install cmake qt6-base-dev libmpv-dev
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-./build/newmpc-be [files...]
+./build/reelplay [files...]
 ```
 
 ## Install (.deb)
 
 ```bash
 cmake --build build --target package
-sudo apt install ./build/newmpc-be_0.3.1_amd64.deb
+sudo apt install ./build/reelplay_0.4.0_amd64.deb
 ```
 
-Adds a menu entry and an icon, and offers newmpc-be under "Open With" for video and audio
+Adds a menu entry and an icon, and offers reelplay under "Open With" for video and audio
 files. To make it the default player: right-click a video, Properties, then Open With.
+
+## Single window
+
+Opening a file while reelplay is running (e.g. double-clicking in the file manager)
+plays it in the existing window instead of starting a second one, like MPC-BE. Turn it
+off in Options > Player. Also there: "When a file ends, play the next file in its
+folder" (off by default).
+
+## Subtitles
+
+Subtitles named like the video (e.g. `film.en.srt` for `film.mkv`) load automatically,
+also from a `Subs/` or `Subtitles/` subfolder. Font, size, color and position are in
+Options > Subtitles.
 
 ## Formats
 
@@ -50,7 +64,7 @@ MPC-BE.
 
 On X11 mpv draws straight into the window (fastest startup). On Wayland it draws through
 libmpv's OpenGL render API, because Wayland can't embed another program's window. To try
-the Wayland code path on X11: `NEWMPC_RENDER=gl ./build/newmpc-be`.
+the Wayland code path on X11: `REELPLAY_RENDER=gl ./build/reelplay`.
 
 ## Hotkeys (MPC-BE defaults)
 
@@ -78,6 +92,8 @@ the Wayland code path on X11: `NEWMPC_RENDER=gl ./build/newmpc-be`.
 | Delete (in playlist) | Remove selected |
 | Ctrl+O / Ctrl+U / Ctrl+L | Open file / URL / subtitle |
 | Ctrl+D | Open DVD/BD (folder with VIDEO_TS or BDMV) |
+| Ctrl+G | Go to time (hh:mm:ss, mm:ss or seconds) |
+| Ctrl+PgDn / Ctrl+PgUp | Next / previous chapter (also Play > Chapters) |
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 
@@ -88,8 +104,8 @@ Playlist: drag to reorder, right-click for Remove / Randomize / Save (.m3u) / Cl
 for the controls; the cursor hides after 2 s.
 
 Volume, window size/position, playlist panel and repeat mode are remembered between runs
-(`~/.config/newmpc-be/`). Each file resumes where you left off
-(`~/.local/share/newmpc-be/watch_later/`).
+(`~/.config/reelplay/`). Each file resumes where you left off
+(`~/.local/share/reelplay/watch_later/`).
 
 ## Tests
 
@@ -98,3 +114,8 @@ GUI tests drive the real window with key and mouse events (needs an X11 display)
 ```bash
 ./build/test_player
 ```
+
+## Licence
+
+GPL-3.0-or-later (see `LICENSE`). Copyright 2026 Matthew Allwood. Reelplay links to
+libmpv and FFmpeg, which Debian/Ubuntu build as GPL-3, so it must stay GPL-compatible.

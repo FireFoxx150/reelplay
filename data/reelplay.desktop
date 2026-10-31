@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=newmpc-be
+Name=Reelplay
 GenericName=Media Player
-Comment=MPC-BE-style media player
-Exec=newmpc-be %U
-Icon=newmpc-be
+Comment=Classic-style media player
+Exec=reelplay %U
+Icon=reelplay
 Terminal=false
 Categories=AudioVideo;Video;Audio;Player;Qt;
 Keywords=video;movie;audio;music;player;mpc;
