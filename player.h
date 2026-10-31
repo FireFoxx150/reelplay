@@ -12,6 +12,7 @@ class QDockWidget;
 class QMenu;
 class QAction;
 class QTimer;
+class QActionGroup;
 class Mpris;
 
 double parseTime(const QString &text); // "1:23:45", "83:45", "45.5" -> seconds; -1 if invalid
@@ -48,6 +49,19 @@ private:
     void readChapters();
     void updateChapterMarks();
     void rebuildChapterMenu();
+    void applyChrome(bool fullscreen);
+    void setAlwaysOnTop(bool on);
+    void toggleStats(bool on);
+    void updateStats();
+    void setVideoAdjust(const char *name, int value);
+    void openVideoAdjust();
+    void rotateVideo(int by);
+    void setCrop(double aspect);
+    void applyAudioFilters();
+    void rebuildAudioDeviceMenu();
+    void finishPlaylist();
+    void addFavorite();
+    void rebuildFavoritesMenu();
     void play();
     void pause();
     void stop();
@@ -79,6 +93,12 @@ private:
     QAction *muteAct;
     QTimer *clickTimer, *idleTimer;
     Mpris *mpris = nullptr;
+    QTimer *statsTimer = nullptr;
+    QMenu *favoritesMenu = nullptr, *audioDeviceMenu = nullptr;
+    QActionGroup *cropGroup = nullptr; // radio items of View > Video > Crop
+    QSize srcSize;                     // the file's size before any crop
+    double pendingSeek = -1;           // favorites: seek here once the file has loaded
+    bool hideMenu = false, hideControls = false, hideStatus = false;
     int current = -1;
     QList<double> chapters; // start times in seconds
     QString folderNeighbors[2]; // previous/next file in the folder of a lone playlist entry

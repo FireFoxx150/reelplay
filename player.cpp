@@ -1,6 +1,13 @@
 #include "player.h"
 #include "mpris.h"
 #include <QActionGroup>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QPushButton>
+#include <QWindow>
 #include <QApplication>
 #include <QCollator>
 #include <QContextMenuEvent>
@@ -181,6 +188,10 @@ Player::Player()
     clickTimer->setSingleShot(true);
     clickTimer->setInterval(QApplication::doubleClickInterval());
     connect(clickTimer, &QTimer::timeout, this, [this] { togglePause(); });
+
+    statsTimer = new QTimer(this);
+    statsTimer->setInterval(500);
+    connect(statsTimer, &QTimer::timeout, this, &Player::updateStats);
 
     // Fullscreen: hide cursor and controls after the mouse rests.
     video->setMouseTracking(true);
@@ -368,6 +379,40 @@ Player::Player()
         connect(a, &QAction::triggered, this, [this, value] { command({"set", "video-aspect-override", value}); });
     }
 
+    // Checkable items keep their state in the menu; the toggled signal does the work.
+    auto checkable = [this](QMenu *menu, const QString &text, const QKeySequence &key, bool checked, std::function<void(bool)> fn) {
+        QAction *a = menu->addAction(text);
+        a->setCheckable(true);
+        a->setChecked(checked);
+        a->setShortcut(key);
+        connect(a, &QAction::toggled, this, fn);
+        addAction(a); // keep hotkeys working while the menu bar is hidden
+        return a;
+    };
+    view->addSeparator();
+    checkable(view, "Always on &Top", QKeySequence("Ctrl+A"), false, [this](bool on) { setAlwaysOnTop(on); });
+    checkable(view, "Hide &Menu Bar", QKeySequence("Ctrl+0"), false, [this](bool on) { hideMenu = on; applyChrome(isFullScreen()); });
+    checkable(view, "Hide Con&trols", QKeySequence("Ctrl+1"), false, [this](bool on) { hideControls = on; applyChrome(isFullScreen()); });
+    checkable(view, "Hide &Status Bar", QKeySequence("Ctrl+2"), false, [this](bool on) { hideStatus = on; applyChrome(isFullScreen()); });
+    checkable(view, "&Statistics", QKeySequence("Ctrl+J"), false, [this](bool on) { toggleStats(on); });
+    QMenu *videoMenu = view->addMenu("&Video");
+    act(videoMenu, "&Adjust Colors...", QKeySequence(), [this] { openVideoAdjust(); });
+    act(videoMenu, "Rotate &Clockwise", QKeySequence(), [this] { rotateVideo(90); });
+    act(videoMenu, "Rotate &Counter-clockwise", QKeySequence(), [this] { rotateVideo(-90); });
+    checkable(videoMenu, "Flip &Horizontal", QKeySequence(), false, [this](bool on) {
+        command({"vf", on ? "add" : "remove", on ? "@flip:hflip" : "@flip"});
+    });
+    checkable(videoMenu, "&Deinterlace", QKeySequence(), false, [this](bool on) { command({"set", "deinterlace", on ? "yes" : "no"}); });
+    QMenu *cropMenu = videoMenu->addMenu("&Crop");
+    cropGroup = new QActionGroup(cropMenu);
+    for (auto [label, aspect] : {std::pair{"No Crop", 0.0}, {"Crop 4:3", 4.0 / 3}, {"Crop 16:9", 16.0 / 9}, {"Crop 1.85:1", 1.85}, {"Crop 2.35:1", 2.35}}) {
+        QAction *a = cropMenu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(aspect == 0);
+        cropGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, aspect] { setCrop(aspect); });
+    }
+
     QMenu *play = menuBar()->addMenu("&Play");
     act(play, "&Play/Pause", QKeySequence("Space"), [this] { togglePause(); });
     act(play, "&Stop", QKeySequence("."), [this] { stop(); });
@@ -417,6 +462,16 @@ Player::Player()
             command({"set", "loop-file", mode == RepeatFile ? "inf" : "no"});
         });
     }
+    QMenu *afterMenu = play->addMenu("After Playback");
+    auto *afterGroup = new QActionGroup(afterMenu);
+    const QString after = QSettings().value("afterPlayback", "nothing").toString();
+    for (auto [label, mode] : {std::pair{"&Do Nothing", "nothing"}, {"&Exit Player", "exit"}, {"&Shut Down", "poweroff"}, {"S&uspend", "suspend"}}) {
+        QAction *a = afterMenu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(after == mode);
+        afterGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [mode] { QSettings().setValue("afterPlayback", mode); });
+    }
     play->addSeparator();
     act(play, "Next File", QKeySequence("PgDown"), [this] { skipFile(1); });
     act(play, "Previous File", QKeySequence("PgUp"), [this] { skipFile(-1); });
@@ -433,6 +488,34 @@ Player::Player()
     act(volume, "&Down", QKeySequence("Down"), [this] { command({"add", "volume", "-5"}); });
     muteAct = act(volume, "&Mute", QKeySequence("Ctrl+M"), [this] { command({"cycle", "mute"}); });
     muteAct->setCheckable(true);
+
+    QMenu *audioOut = play->addMenu("&Audio Output");
+    audioDeviceMenu = audioOut->addMenu("&Device");
+    connect(audioDeviceMenu, &QMenu::aboutToShow, this, &Player::rebuildAudioDeviceMenu);
+    checkable(audioOut, "&Normalize Volume", QKeySequence(), QSettings().value("audioNormalize", false).toBool(), [this](bool on) {
+        QSettings().setValue("audioNormalize", on);
+        applyAudioFilters();
+    });
+    QMenu *eqMenu = audioOut->addMenu("&Equalizer");
+    auto *eqGroup = new QActionGroup(eqMenu);
+    const QString eq = QSettings().value("audioEq", "flat").toString();
+    for (auto [label, mode] : {std::pair{"&Flat", "flat"}, {"&Bass Boost", "bass"}, {"&Treble Boost", "treble"}, {"&Voice", "voice"}}) {
+        QAction *a = eqMenu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(eq == mode);
+        eqGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, mode] {
+            QSettings().setValue("audioEq", mode);
+            applyAudioFilters();
+        });
+    }
+
+    favoritesMenu = menuBar()->addMenu("F&avorites");
+    connect(favoritesMenu, &QMenu::aboutToShow, this, &Player::rebuildFavoritesMenu);
+    QAction *addFav = new QAction(this);
+    addFav->setShortcut(QKeySequence("Ctrl+Shift+F"));
+    connect(addFav, &QAction::triggered, this, &Player::addFavorite);
+    addAction(addFav); // hotkey only; the menu builds its own entry
 
     QMenu *help = menuBar()->addMenu("&Help");
     act(help, "&About...", QKeySequence(), [this] {
@@ -750,6 +833,9 @@ void Player::playIndex(int i)
         command({"set", "dvd-device", source.toUtf8()});
     else if (url == "bd://")
         command({"set", "bluray-device", source.toUtf8()});
+    command({"set", "video-crop", ""}); // crop is per file
+    if (cropGroup)
+        cropGroup->actions().first()->setChecked(true);
     command({"loadfile", url.toUtf8()});
     addRecent(source);
     folderNeighbors[0] = folderNeighbors[1] = QString();
@@ -880,12 +966,202 @@ void Player::stop()
     updateTime(0);
 }
 
+void Player::applyChrome(bool fullscreen)
+{
+    menuBar()->setVisible(!fullscreen && !hideMenu);
+    statusBar()->setVisible(!fullscreen && !hideStatus);
+    controls->setVisible(!fullscreen && !hideControls);
+}
+
+// Always on top is a window-manager state. Setting it on the QWindow avoids QWidget's
+// window re-creation, which would orphan the video window that mpv draws into.
+void Player::setAlwaysOnTop(bool on)
+{
+    if (QWindow *w = windowHandle())
+        w->setFlag(Qt::WindowStaysOnTopHint, on);
+}
+
+void Player::toggleStats(bool on)
+{
+    if (on) {
+        updateStats();
+        statsTimer->start();
+    } else {
+        statsTimer->stop();
+        command({"show-text", "", "1"}); // clears the overlay
+    }
+}
+
+// Refreshed twice a second. Values are read here: show-text doesn't expand ${property}.
+void Player::updateStats()
+{
+    if (stopped)
+        return;
+    const QString text =
+        "Video: " + prop("video-codec") + "  " + prop("width") + "x" + prop("height") + "  "
+        + QString::number(prop("container-fps").toDouble(), 'f', 2) + " fps\n"
+        "Audio: " + prop("audio-codec-name") + "  " + prop("audio-params/samplerate") + " Hz  "
+        + prop("audio-params/channel-count") + " ch\n"
+        "Decoder: " + prop("hwdec-current") + "  dropped " + prop("frame-drop-count")
+        + " (decoder " + prop("decoder-frame-drop-count") + ")\n"
+        "A/V sync: " + QString::number(prop("avsync").toDouble() * 1000, 'f', 1) + " ms  bitrate "
+        + QString::number(prop("video-bitrate").toDouble() / 1000, 'f', 0) + " kb/s";
+    command({"show-text", text.toUtf8(), "1000"});
+}
+
+void Player::setVideoAdjust(const char *name, int value)
+{
+    command({"set", name, QByteArray::number(value)});
+    QSettings().setValue(QString("video/") + name, value);
+}
+
+void Player::openVideoAdjust()
+{
+    QDialog d(this);
+    d.setWindowTitle("Adjust Colors");
+    auto *form = new QFormLayout(&d);
+    for (auto [name, label] : {std::pair{"brightness", "Brightness"}, {"contrast", "Contrast"}, {"saturation", "Saturation"}, {"gamma", "Gamma"}, {"hue", "Hue"}}) {
+        auto *s = new QSlider(Qt::Horizontal);
+        s->setObjectName(name);
+        s->setRange(-100, 100);
+        s->setValue(qRound(prop(name).toDouble()));
+        connect(s, &QSlider::valueChanged, &d, [this, name](int v) { setVideoAdjust(name, v); });
+        form->addRow(label, s);
+    }
+    auto *reset = new QPushButton("Reset");
+    connect(reset, &QPushButton::clicked, &d, [&d] {
+        for (QSlider *s : d.findChildren<QSlider *>())
+            s->setValue(0);
+    });
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    form->addRow(reset);
+    form->addRow(buttons);
+    d.exec();
+}
+
+void Player::rotateVideo(int by)
+{
+    command({"set", "video-rotate", QByteArray::number((qRound(prop("video-rotate").toDouble()) + by + 360) % 360)});
+}
+
+// Crops the source to an aspect ratio, centred. 0 turns cropping off.
+void Player::setCrop(double aspect)
+{
+    if (aspect <= 0 || srcSize.isEmpty()) {
+        command({"set", "video-crop", ""});
+        return;
+    }
+    int w = srcSize.width(), h = srcSize.height(), cw = w, ch = h;
+    if (double(w) / h > aspect)
+        cw = qRound(h * aspect);
+    else
+        ch = qRound(w / aspect);
+    command({"set", "video-crop",
+             QByteArray::number(cw) + "x" + QByteArray::number(ch) + "+" +
+             QByteArray::number((w - cw) / 2) + "+" + QByteArray::number((h - ch) / 2)});
+}
+
+// Normalizer and equalizer as one mpv audio filter chain; both are remembered.
+void Player::applyAudioFilters()
+{
+    QSettings s;
+    const QString eq = s.value("audioEq", "flat").toString();
+    QStringList filters;
+    if (s.value("audioNormalize", false).toBool())
+        filters << "lavfi=[dynaudnorm]";
+    if (eq == "bass")
+        filters << "lavfi=[bass=g=6]";
+    else if (eq == "treble")
+        filters << "lavfi=[treble=g=5]";
+    else if (eq == "voice")
+        filters << "lavfi=[equalizer=f=2500:t=q:w=1.2:g=4]";
+    mpv_set_property_string(mpv, "af", filters.join(',').toUtf8().constData());
+}
+
+void Player::rebuildAudioDeviceMenu()
+{
+    audioDeviceMenu->clear();
+    QActionGroup *group = audioDeviceMenu->findChild<QActionGroup *>();
+    if (!group)
+        group = new QActionGroup(audioDeviceMenu);
+    const QString now = prop("audio-device");
+    const int n = prop("audio-device-list/count").toInt();
+    for (int i = 0; i < n; ++i) {
+        QByteArray p = "audio-device-list/" + QByteArray::number(i) + "/";
+        const QString name = prop(p + "name");
+        QString desc = prop(p + "description");
+        QAction *a = audioDeviceMenu->addAction(desc.isEmpty() ? name : desc);
+        a->setCheckable(true);
+        a->setChecked(name == now);
+        group->addAction(a);
+        connect(a, &QAction::triggered, this, [this, name] {
+            command({"set", "audio-device", name.toUtf8()});
+            QSettings().setValue("audioDevice", name);
+        });
+    }
+}
+
+// What happens when the playlist runs out of files (not when the user presses Stop).
+void Player::finishPlaylist()
+{
+    const QString action = QSettings().value("afterPlayback", "nothing").toString();
+    if (action == "exit") {
+        QTimer::singleShot(0, this, [this] { close(); }); // not from inside mpv's event handling
+    } else if (action == "poweroff" || action == "suspend") {
+        QDBusMessage call = QDBusMessage::createMethodCall("org.freedesktop.login1", "/org/freedesktop/login1",
+                                                           "org.freedesktop.login1.Manager",
+                                                           action == "suspend" ? "Suspend" : "PowerOff");
+        call << true; // interactive: polkit may ask for a password
+        QDBusConnection::systemBus().call(call, QDBus::NoBlock); // logind answers; nothing to wait for
+    }
+}
+
+// Favorites are file + position; the position is applied once the file has loaded.
+void Player::addFavorite()
+{
+    if (stopped || current < 0)
+        return;
+    const QString path = playlist->item(current)->data(Qt::UserRole + 1).toString();
+    QStringList kept{QString::number(prop("time-pos").toDouble(), 'f', 1) + "\t" + path};
+    for (const QString &e : QSettings().value("favorites").toStringList())
+        if (e.mid(e.indexOf('\t') + 1) != path)
+            kept << e;
+    QSettings().setValue("favorites", kept.mid(0, 30));
+    statusBar()->showMessage("Added to favorites", 3000);
+}
+
+void Player::rebuildFavoritesMenu()
+{
+    favoritesMenu->clear();
+    QAction *add = favoritesMenu->addAction("&Add Current File");
+    add->setEnabled(!stopped);
+    connect(add, &QAction::triggered, this, &Player::addFavorite);
+    favoritesMenu->addSeparator();
+    const QStringList list = QSettings().value("favorites").toStringList();
+    if (list.isEmpty())
+        favoritesMenu->addAction("No Favorites")->setEnabled(false);
+    for (const QString &e : list) {
+        const int tab = e.indexOf('\t');
+        const double secs = e.left(tab).toDouble();
+        const QString path = e.mid(tab + 1);
+        QAction *a = favoritesMenu->addAction(fmtTime(secs) + "  " + (path.contains("://") ? path : QFileInfo(path).fileName()));
+        connect(a, &QAction::triggered, this, [this, path, secs] {
+            pendingSeek = secs;
+            openFiles({path});
+        });
+    }
+    if (!list.isEmpty()) {
+        favoritesMenu->addSeparator();
+        QAction *clear = favoritesMenu->addAction("&Clear Favorites");
+        connect(clear, &QAction::triggered, this, [] { QSettings().remove("favorites"); });
+    }
+}
+
 void Player::toggleFullscreen()
 {
     bool fs = !isFullScreen();
-    menuBar()->setVisible(!fs);
-    statusBar()->setVisible(!fs);
-    controls->setVisible(!fs);
+    applyChrome(fs);
     video->unsetCursor();
     if (fs) idleTimer->start(); else idleTimer->stop();
     static bool dockWasVisible = false;
@@ -973,6 +1249,11 @@ void Player::handleEvents()
             statusLabel->setText("Opening...");
         } else if (ev->event_id == MPV_EVENT_FILE_LOADED) {
             statusLabel->setText(prop("pause") == "yes" ? "Paused" : "Playing");
+            srcSize = QSize(prop("video-params/w").toInt(), prop("video-params/h").toInt());
+            if (pendingSeek >= 0) {
+                command({"seek", QByteArray::number(pendingSeek), "absolute"});
+                pendingSeek = -1;
+            }
         } else if (ev->event_id == MPV_EVENT_END_FILE) {
             auto *e = static_cast<mpv_event_end_file *>(ev->data);
             if (e->reason == MPV_END_FILE_REASON_ERROR)
@@ -984,8 +1265,11 @@ void Player::handleEvents()
                     playIndex(0);
                 else if (e->reason == MPV_END_FILE_REASON_EOF && QSettings().value("autoNext", false).toBool() && canSkip(1))
                     skipFile(1); // lone file: carry on with the next one in its folder
-                else
+                else {
                     stop();
+                    if (e->reason == MPV_END_FILE_REASON_EOF) // a file that failed to load is not "finished"
+                        finishPlaylist();
+                }
             }
         } else if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
             mpris->seeked(prop("time-pos").toDouble());
@@ -1005,7 +1289,7 @@ bool Player::eventFilter(QObject *obj, QEvent *ev)
                 video->unsetCursor();
                 idleTimer->start();
                 // Controls slide in when the mouse reaches the bottom edge.
-                if (static_cast<QMouseEvent *>(ev)->position().y() >= video->height() - 40)
+                if (!hideControls && static_cast<QMouseEvent *>(ev)->position().y() >= video->height() - 40)
                     controls->show();
                 else
                     controls->hide();

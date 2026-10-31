@@ -15,7 +15,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 ```bash
 cmake --build build --target package
-sudo apt install ./build/reelplay_0.4.0_amd64.deb
+sudo apt install ./build/reelplay_0.5.0_amd64.deb
 ```
 
 Adds a menu entry and an icon, and offers reelplay under "Open With" for video and audio
@@ -27,6 +27,15 @@ Opening a file while reelplay is running (e.g. double-clicking in the file manag
 plays it in the existing window instead of starting a second one, like MPC-BE. Turn it
 off in Options > Player. Also there: "When a file ends, play the next file in its
 folder" (off by default).
+
+## Picture, sound and favorites
+
+- **View > Video:** adjust brightness, contrast, saturation, gamma and hue; rotate;
+  flip horizontally; deinterlace; crop to 4:3, 16:9, 1.85:1 or 2.35:1 (centred).
+- **Play > Audio Output:** pick the output device, normalize volume, and equalizer presets
+  (Flat, Bass Boost, Treble Boost, Voice).
+- **Play > After Playback:** do nothing, exit, shut down or suspend when the playlist ends.
+- **Favorites:** remember a file at its current position and jump back to it later.
 
 ## Subtitles
 
@@ -94,6 +103,10 @@ the Wayland code path on X11: `REELPLAY_RENDER=gl ./build/reelplay`.
 | Ctrl+D | Open DVD/BD (folder with VIDEO_TS or BDMV) |
 | Ctrl+G | Go to time (hh:mm:ss, mm:ss or seconds) |
 | Ctrl+PgDn / Ctrl+PgUp | Next / previous chapter (also Play > Chapters) |
+| Ctrl+A | Always on top |
+| Ctrl+0 / Ctrl+1 / Ctrl+2 | Hide menu bar / controls / status bar |
+| Ctrl+J | Statistics overlay (codec, size, dropped frames, sync) |
+| Ctrl+Shift+F | Add the current file to Favorites |
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 

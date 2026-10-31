@@ -17,6 +17,8 @@
 #include <QContextMenuEvent>
 #include <QTemporaryDir>
 #include <QProcess>
+#include <QWindow>
+#include <QStatusBar>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QFontComboBox>
@@ -1029,6 +1031,172 @@ private slots:
                              "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player", "Metadata"});
         proc.waitForFinished(3000);
         return proc.readAllStandardOutput();
+    }
+
+    void chromeToggles()
+    {
+        startClips();
+        key("Ctrl+1");
+        QTRY_VERIFY(!p->controls->isVisible());
+        key("Ctrl+1");
+        QTRY_VERIFY(p->controls->isVisible());
+        key("Ctrl+0");
+        QTRY_VERIFY(!p->menuBar()->isVisible());
+        key("Ctrl+2");
+        QTRY_VERIFY(!p->statusBar()->isVisible());
+        key("Ctrl+2");
+        key("Ctrl+0");
+        QTRY_VERIFY(p->menuBar()->isVisible() && p->statusBar()->isVisible());
+    }
+
+    void hiddenPartsSurviveFullscreen()
+    {
+        startClips();
+        key("Ctrl+0");
+        QTRY_VERIFY(!p->menuBar()->isVisible());
+        key("Alt+Return");
+        QTRY_VERIFY(p->isFullScreen());
+        key("Esc");
+        QTRY_VERIFY(!p->isFullScreen());
+        QVERIFY(!p->menuBar()->isVisible()); // still hidden after leaving fullscreen
+        key("Ctrl+0");
+        QTRY_VERIFY(p->menuBar()->isVisible());
+    }
+
+    bool wmState(const QString &atom)
+    {
+        QProcess xprop;
+        xprop.start("xprop", {"-id", QString::number(p->winId()), "_NET_WM_STATE"});
+        xprop.waitForFinished(3000);
+        return QString::fromUtf8(xprop.readAllStandardOutput()).contains(atom);
+    }
+
+    void alwaysOnTop()
+    {
+        if (QStandardPaths::findExecutable("xprop").isEmpty())
+            QSKIP("xprop is needed to check the window manager state");
+        startClips();
+        key("Ctrl+A");
+        QTRY_VERIFY(p->windowHandle()->flags().testFlag(Qt::WindowStaysOnTopHint));
+        QTRY_VERIFY(wmState("_NET_WM_STATE_ABOVE"));
+        key("Ctrl+A");
+        QTRY_VERIFY(!p->windowHandle()->flags().testFlag(Qt::WindowStaysOnTopHint));
+        QTRY_VERIFY(!wmState("_NET_WM_STATE_ABOVE"));
+        QTRY_VERIFY(pos() > 0); // playback carries on
+    }
+
+    void statsOverlay()
+    {
+        startClips();
+        key("Ctrl+J");
+        QTRY_VERIFY(p->statsTimer->isActive());
+        QTest::qWait(1200); // let the overlay refresh a few times
+        key("Ctrl+J");
+        QVERIFY(!p->statsTimer->isActive());
+    }
+
+    void videoAdjustments()
+    {
+        startClips();
+        onModal([](QDialog *d) {
+            d->findChild<QSlider *>("brightness")->setValue(40);
+            d->accept();
+        });
+        trigger("&Adjust Colors...");
+        QTRY_COMPARE(p->prop("brightness").toDouble(), 40.0);
+        QCOMPARE(QSettings().value("video/brightness").toInt(), 40);
+        p->close();
+        newPlayer();
+        QTRY_COMPARE(p->prop("brightness").toDouble(), 40.0); // restored at startup
+    }
+
+    void videoTransforms()
+    {
+        startClips();
+        trigger("Rotate &Clockwise");
+        QTRY_COMPARE(p->prop("video-rotate").toInt(), 90);
+        trigger("Rotate &Counter-clockwise");
+        trigger("Rotate &Counter-clockwise");
+        QTRY_COMPARE(p->prop("video-rotate").toInt(), 270);
+        trigger("Flip &Horizontal");
+        QTest::qWait(500);
+        QTRY_VERIFY(p->prop("vf").contains("hflip"));
+        trigger("Flip &Horizontal");
+        QTRY_VERIFY(!p->prop("vf").contains("hflip"));
+        trigger("&Deinterlace");
+        QTRY_COMPARE(p->prop("deinterlace"), QString("yes"));
+        trigger("Crop 16:9"); // 320x240 source: centred 320x180 strip
+        QTRY_COMPARE(p->prop("video-crop"), QString("320x180+0+30"));
+        trigger("No Crop");
+        QTRY_COMPARE(p->prop("video-crop"), QString(""));
+    }
+
+    void audioOutput()
+    {
+        startClips();
+        trigger("&Normalize Volume");
+        QTRY_VERIFY(p->prop("af").contains("dynaudnorm"));
+        trigger("&Bass Boost");
+        QTRY_VERIFY(p->prop("af").contains("bass"));
+        QVERIFY(p->prop("af").contains("dynaudnorm")); // normalizer stays on
+        trigger("&Flat");
+        QTRY_VERIFY(!p->prop("af").contains("bass"));
+        trigger("&Normalize Volume");
+        QTRY_VERIFY(p->prop("af").isEmpty());
+    }
+
+    void audioDevice()
+    {
+        startClips();
+        emit p->audioDeviceMenu->aboutToShow();
+        QList<QAction *> devices = p->audioDeviceMenu->actions();
+        if (devices.isEmpty())
+            QSKIP("mpv lists no audio devices here");
+        QString name = p->prop("audio-device-list/0/name");
+        devices.first()->trigger();
+        QTRY_COMPARE(p->prop("audio-device"), name);
+        QCOMPARE(QSettings().value("audioDevice").toString(), name);
+    }
+
+    void afterPlaybackExit()
+    {
+        trigger("&Exit Player");
+        QCOMPARE(QSettings().value("afterPlayback").toString(), QString("exit"));
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"seek", "59", "absolute"}); // near the end of the 60 s clip
+        QTRY_VERIFY_WITH_TIMEOUT(!p->isVisible(), 10000);
+    }
+
+    // A file that fails to load on the last slot stops playback but must not run the
+    // After Playback action: with "Exit Player" the window has to stay open.
+    void errorDoesNotFinishPlaylist()
+    {
+        trigger("&Exit Player");
+        p->openFiles({tmp.filePath("missing.mkv")});
+        QTest::qWait(3000);
+        QVERIFY(p->stopped);
+        QVERIFY(p->isVisible());
+    }
+
+    void favorites()
+    {
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"seek", "30", "absolute"});
+        QTRY_VERIFY(qAbs(pos() - 30) < 2);
+        key("Ctrl+Shift+F");
+        QCOMPARE(QSettings().value("favorites").toStringList().size(), 1);
+        p->openFiles({clipB});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        emit p->favoritesMenu->aboutToShow();
+        QAction *entry = nullptr;
+        for (QAction *a : p->favoritesMenu->actions())
+            if (a->text().contains("a.mkv"))
+                entry = a;
+        QVERIFY(entry);
+        entry->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(p->playlist->item(0)->text() == "a.mkv" && qAbs(pos() - 30) < 3, 8000);
     }
 };
 

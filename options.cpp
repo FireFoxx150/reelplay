@@ -68,6 +68,11 @@ void Player::applySettings()
     mpv_set_property_string(mpv, "sub-font-size", s.value("subSize", 55).toString().toUtf8().constData());
     mpv_set_property_string(mpv, "sub-color", s.value("subColor", "#ffffff").toString().toUtf8().constData());
     mpv_set_property_string(mpv, "sub-pos", s.value("subPos", 100).toString().toUtf8().constData());
+    for (const char *name : {"brightness", "contrast", "saturation", "gamma", "hue"})
+        mpv_set_property_string(mpv, name, QByteArray::number(s.value(QString("video/") + name, 0).toInt()).constData());
+    if (s.contains("audioDevice"))
+        mpv_set_property_string(mpv, "audio-device", s.value("audioDevice").toString().toUtf8().constData());
+    applyAudioFilters();
     applyTheme(s.value("darkTheme", true).toBool());
     for (QAction *a : hotkeyActions(this))
         a->setShortcut(s.value("keys/" + a->objectName(), a->property("defaultKey")).value<QKeySequence>());
