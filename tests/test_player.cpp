@@ -1314,7 +1314,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
         const QString path = tmp.filePath("recorded.mkv");
         p->startRecording(path);
-        QCOMPARE(p->prop("stream-record"), path);
+        QTRY_COMPARE(p->prop("stream-record"), path); // the set is async; mpv may not have applied it yet
         QVERIFY(p->recordAct->isChecked());
         QTest::qWait(2000);
         p->stopRecording();
