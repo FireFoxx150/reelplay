@@ -220,7 +220,7 @@ headless, use Xvfb with a window manager and a session bus, with `REELPLAY_AO=nu
 Every push runs `.github/workflows/ci.yml`. It builds the project, runs the tests under a virtual
 display, and uploads the `.deb` as a run artifact.
 
-For how the code is laid out and how it works, see the [developer wiki](docs/wiki/Home.md).
+For how the code is laid out and how it works, see the [developer wiki](https://github.com/FireFoxx150/reelplay/wiki).
 
 ## Known limitations
 
