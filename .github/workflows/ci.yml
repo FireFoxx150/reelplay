@@ -27,6 +27,7 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           REELPLAY_AO: "null"
+          REELPLAY_VO: "null"
         run: |
           # Some tests need focus and always-on-top state, which only a window manager provides.
           xvfb-run -a dbus-run-session -- bash -c '

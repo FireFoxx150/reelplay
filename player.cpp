@@ -619,6 +619,8 @@ Player::Player()
     mpv_set_option_string(mpv, "sub-file-paths", "Subs:subs:Subtitles:subtitles:Sub:sub");
     if (const QByteArray ao = qgetenv("REELPLAY_AO"); !ao.isEmpty()) // e.g. "null": no audio device
         mpv_set_option_string(mpv, "ao", ao.constData());
+    if (const QByteArray vo = qgetenv("REELPLAY_VO"); !vo.isEmpty()) // e.g. "null": no video output (CI)
+        mpv_set_option_string(mpv, "vo", vo.constData());
     mpv_set_option_string(mpv, "audio-display", "embedded-first"); // an audio file's cover art, if it has one
     mpv_set_option_string(mpv, "ytdl", "yes"); // YouTube & co. via yt-dlp, like VLC's lua scripts
     // Resume where each file was left off; our own dir so we don't mix with the mpv CLI.
@@ -1385,11 +1387,13 @@ void Player::setVideoFilter(const char *label, const char *filter, bool on)
 void Player::setCrop(double aspect)
 {
     QSettings().setValue("video/crop", aspect);
-    if (aspect <= 0 || srcSize.isEmpty()) {
+    // The size captured at load can be missing if the video output came up late; ask again.
+    QSize src = srcSize.isEmpty() ? QSize(prop("video-params/w").toInt(), prop("video-params/h").toInt()) : srcSize;
+    if (aspect <= 0 || src.isEmpty()) {
         command({"set", "video-crop", ""});
         return;
     }
-    int w = srcSize.width(), h = srcSize.height(), cw = w, ch = h;
+    int w = src.width(), h = src.height(), cw = w, ch = h;
     if (double(w) / h > aspect)
         cw = qRound(h * aspect);
     else
