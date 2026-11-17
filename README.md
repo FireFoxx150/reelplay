@@ -19,7 +19,7 @@ left off in every file.
 - **Seek bar:** click to jump straight to a point. Hover to see the time and a frame preview
   from that point. Previews are cut with ffmpeg, so they need local files.
 - **Chapters:** Play > Chapters, Ctrl+PgDn / Ctrl+PgUp, and S to skip an intro, recap, opening,
-  or credits chapter (matched by its title).
+  or credits chapter (matched by its title). Options > Player can skip them automatically.
 - **Repeat and A-B:** repeat the file or the playlist, and set A and B markers to loop a section.
 - **Resume:** each file starts where you left it. Favorites and per-file bookmarks let you
   jump back to a place later.
@@ -34,6 +34,9 @@ left off in every file.
 - **View > Video:** brightness, contrast, saturation, gamma and hue; rotate; flip horizontally;
   deinterlace; crop to 4:3, 16:9, 1.85:1 or 2.35:1 (centred).
 - **Scaling:** default, sharp (EWA Lanczos) or smooth (Spline36) upscaling.
+- **Smooth motion and shaders:** View > Video > Smooth Motion interpolates frames to the display
+  rate, which costs GPU time. Upscaling Shader loads a GLSL file of your own that mpv runs on each
+  frame, and Clear Upscaling Shader removes it.
 - **Filters:** HDR tone mapping, denoise and sharpen.
 - **Window:** always on top, fullscreen (Alt+Enter, or double-click; Esc leaves), zoom at 50%,
   100% or 200%, and the menu bar, controls and status bar can each be hidden.
@@ -188,9 +191,8 @@ checksums, so it isn't run automatically.
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 
-Right-click the video for the full menu. Most shortcuts can be changed on the Keys tab in Options.
-These are fixed: Ctrl+A, Ctrl+0, Ctrl+1, Ctrl+2, Ctrl+J, Ctrl+B, Ctrl+Shift+F, Delete in the
-playlist, and the media keys.
+Right-click the video for the full menu. Every shortcut can be changed on the Keys tab in Options,
+except the media keys, which the desktop sends.
 
 ## Settings and data
 

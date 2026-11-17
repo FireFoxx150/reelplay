@@ -165,6 +165,12 @@ static QString fmtTime(double s)
     return QString::asprintf("%02d:%02d:%02d", t / 3600, t / 60 % 60, t % 60);
 }
 
+// The id a hotkey is saved under, e.g. "Volume/Mute". Options > Keys lists actions by it.
+static QString hotkeyId(const QString &group, const QString &text)
+{
+    return QString(group).remove('&') + "/" + QString(text).remove('&').replace('/', '-');
+}
+
 Player::Player()
 {
     setWindowTitle("Reelplay");
@@ -287,6 +293,9 @@ Player::Player()
     auto plAct = [this](const QString &text, const QKeySequence &key, std::function<void()> fn) {
         auto *a = new QAction(text, playlist);
         a->setShortcut(key);
+        a->setProperty("defaultKey", key);
+        if (!key.isEmpty())
+            a->setObjectName(hotkeyId("Playlist", text));
         a->setShortcutContext(Qt::WidgetShortcut);
         connect(a, &QAction::triggered, this, fn);
         playlist->addAction(a);
@@ -407,6 +416,9 @@ Player::Player()
         a->setCheckable(true);
         a->setChecked(checked);
         a->setShortcut(key);
+        a->setProperty("defaultKey", key);
+        if (!key.isEmpty()) // only keyed items are listed in Options > Keys
+            a->setObjectName(hotkeyId(menu->title(), text));
         connect(a, &QAction::toggled, this, fn);
         addAction(a); // keep hotkeys working while the menu bar is hidden
         return a;
@@ -453,6 +465,9 @@ Player::Player()
     checkable(videoMenu, "&HDR Tone Mapping", QKeySequence(), QSettings().value("toneMap", true).toBool(), [this](bool on) { setToneMap(on); });
     checkable(videoMenu, "&Denoise", QKeySequence(), QSettings().value("video/denoise", false).toBool(), [this](bool on) { setVideoFilter("denoise", "hqdn3d", on); });
     checkable(videoMenu, "&Sharpen", QKeySequence(), QSettings().value("video/sharpen", false).toBool(), [this](bool on) { setVideoFilter("sharpen", "unsharp", on); });
+    checkable(videoMenu, "&Smooth Motion", QKeySequence(), QSettings().value("video/smooth", false).toBool(), [this](bool on) { setSmoothMotion(on); });
+    act(videoMenu, "Upscaling &Shader...", QKeySequence(), [this] { chooseShader(); });
+    act(videoMenu, "Clear Upscaling Shader", QKeySequence(), [this] { setShader(QString()); });
 
     QMenu *play = menuBar()->addMenu("&Play");
     act(play, "&Play/Pause", QKeySequence("Space"), [this] { togglePause(); });
@@ -517,6 +532,8 @@ Player::Player()
     connect(bookmarksMenu, &QMenu::aboutToShow, this, &Player::rebuildBookmarksMenu);
     QAction *addBm = new QAction(this);
     addBm->setShortcut(QKeySequence("Ctrl+B"));
+    addBm->setProperty("defaultKey", QKeySequence("Ctrl+B"));
+    addBm->setObjectName("Bookmarks/Add Bookmark");
     connect(addBm, &QAction::triggered, this, &Player::addBookmark);
     addAction(addBm); // hotkey only; the menu builds its own entries
 
@@ -592,6 +609,8 @@ Player::Player()
     connect(favoritesMenu, &QMenu::aboutToShow, this, &Player::rebuildFavoritesMenu);
     QAction *addFav = new QAction(this);
     addFav->setShortcut(QKeySequence("Ctrl+Shift+F"));
+    addFav->setProperty("defaultKey", QKeySequence("Ctrl+Shift+F"));
+    addFav->setObjectName("Favorites/Add Current File");
     connect(addFav, &QAction::triggered, this, &Player::addFavorite);
     addAction(addFav); // hotkey only; the menu builds its own entry
 
@@ -656,6 +675,7 @@ Player::Player()
     mpv_observe_property(mpv, 0, "mute", MPV_FORMAT_FLAG);
     mpv_observe_property(mpv, 0, "track-list", MPV_FORMAT_NONE);
     mpv_observe_property(mpv, 0, "chapter-list", MPV_FORMAT_NONE);
+    mpv_observe_property(mpv, 0, "chapter", MPV_FORMAT_INT64);
 
     // mpv wakes us from its own thread; hop to the GUI thread to drain events.
     mpv_set_wakeup_callback(mpv, [](void *ctx) {
@@ -813,7 +833,7 @@ QAction *Player::act(QMenu *menu, const QString &text, const QKeySequence &key, 
     a->setShortcut(key);
     a->setProperty("defaultKey", key);
     // Stable id for saved hotkeys, e.g. "Volume/Mute".
-    a->setObjectName(QString(menu->title()).remove('&') + "/" + QString(text).remove('&').replace('/', '-'));
+    a->setObjectName(hotkeyId(menu->title(), text));
     connect(a, &QAction::triggered, this, fn);
     addAction(a); // keep hotkeys working while the menu bar is hidden in fullscreen
     return a;
@@ -1066,6 +1086,29 @@ void Player::setToneMap(bool on)
     command({"set", "tone-mapping", on ? "auto" : "clip"});
 }
 
+// View > Video > Smooth Motion: interpolates frames to the display rate. It costs GPU time.
+void Player::setSmoothMotion(bool on)
+{
+    QSettings().setValue("video/smooth", on);
+    command({"set", "interpolation", on ? "yes" : "no"});
+    command({"set", "video-sync", on ? "display-resample" : "audio"});
+}
+
+// View > Video > Upscaling Shader: a GLSL file that mpv runs on each frame. An empty path clears it.
+void Player::setShader(const QString &path)
+{
+    QSettings().setValue("video/shader", path);
+    command({"set", "glsl-shaders", path.toUtf8()});
+}
+
+void Player::chooseShader()
+{
+    // Qt's own dialog: the GTK one that some desktops pick cannot be driven by the tests.
+    const QString path = QFileDialog::getOpenFileName(this, "Upscaling Shader", {}, "GLSL shaders (*.glsl *.hook);;All files (*)", nullptr, QFileDialog::DontUseNativeDialog);
+    if (!path.isEmpty())
+        setShader(path);
+}
+
 // Passthrough sends AC3/DTS/TrueHD to the device undecoded. A device that can't take it
 // gives silence or garbled sound, so it stays off unless the user turns it on.
 void Player::setPassthrough(bool on)
@@ -1074,19 +1117,22 @@ void Player::setPassthrough(bool on)
     command({"set", "audio-spdif", on ? "ac3,eac3,dts,dts-hd,truehd" : ""});
 }
 
-// Skips the current chapter when its title marks it as an intro or credits.
-void Player::skipIntro()
+// Skips the current chapter when its title marks it as an intro or credits. Automatic calls
+// come on every chapter change, so they stay quiet when there is nothing to skip.
+void Player::skipIntro(bool automatic)
 {
     const int n = prop("chapter-list/count").toInt();
     const int c = prop("chapter").toInt();
     if (n == 0 || c < 0 || c >= n) {
-        osd("No chapters in this file");
+        if (!automatic)
+            osd("No chapters in this file");
         return;
     }
     const QString title = prop(QByteArray("chapter-list/") + QByteArray::number(c) + "/title");
     static const QRegularExpression skippable("intro|opening|recap|credit|ending", QRegularExpression::CaseInsensitiveOption);
     if (!skippable.match(title).hasMatch()) {
-        osd("Not an intro or credits chapter");
+        if (!automatic)
+            osd("Not an intro or credits chapter");
         return;
     }
     if (c + 1 < n)
@@ -1688,6 +1734,9 @@ void Player::handleEvents()
                 volBar->setValue(int(*static_cast<double *>(p->data)));
             } else if (name == "mute") {
                 muteAct->setChecked(*static_cast<int *>(p->data));
+            } else if (name == "chapter") {
+                if (QSettings().value("autoSkip", false).toBool())
+                    skipIntro(true);
             }
         } else if (ev->event_id == MPV_EVENT_START_FILE) {
             statusLabel->setText("Opening...");
@@ -1696,6 +1745,8 @@ void Player::handleEvents()
             srcSize = QSize(prop("video-params/w").toInt(), prop("video-params/h").toInt());
             applyAudioFilters(); // band limits depend on this file's sample rate
             applyVisualizer();
+            if (QSettings().value("autoSkip", false).toBool())
+                skipIntro(true);
             if (cropGroup) { // the remembered crop applies to every file
                 const double saved = QSettings().value("video/crop", 0.0).toDouble();
                 for (QAction *a : cropGroup->actions())

@@ -78,9 +78,12 @@ private:
     void rebuildFavoritesMenu();
     void setScale(const QString &filter);
     void setToneMap(bool on);
+    void setSmoothMotion(bool on);
+    void setShader(const QString &path);
+    void chooseShader();
     void setPassthrough(bool on);
     void setVideoFilter(const char *label, const char *filter, bool on);
-    void skipIntro();
+    void skipIntro(bool automatic = false);
     void addBookmark();
     void rebuildBookmarksMenu();
     void startRecording(const QString &path);

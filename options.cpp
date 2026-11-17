@@ -11,6 +11,7 @@
 #include <QHeaderView>
 #include <QKeySequenceEdit>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -20,13 +21,14 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-// Hotkey-able actions are the ones act() created; their id looks like "Menu/Item".
-static QList<QAction *> hotkeyActions(QWidget *w)
+// Hotkey-able actions are the ones with an id like "Menu/Item", on the window and the playlist.
+static QList<QAction *> hotkeyActions(const QList<QWidget *> &widgets)
 {
     QList<QAction *> list;
-    for (QAction *a : w->actions())
-        if (a->objectName().contains('/'))
-            list << a;
+    for (QWidget *w : widgets)
+        for (QAction *a : w->actions())
+            if (a->objectName().contains('/'))
+                list << a;
     return list;
 }
 
@@ -78,6 +80,8 @@ void Player::applySettings()
     applyAudioFilters();
     setScale(s.value("scale", "bilinear").toString());
     setToneMap(s.value("toneMap", true).toBool());
+    setSmoothMotion(s.value("video/smooth", false).toBool());
+    setShader(s.value("video/shader").toString());
     setPassthrough(s.value("passthrough", false).toBool());
     setVideoFilter("flip", "hflip", s.value("video/flip", false).toBool());
     setVideoFilter("denoise", "hqdn3d", s.value("video/denoise", false).toBool());
@@ -85,7 +89,7 @@ void Player::applySettings()
     mpv_set_property_string(mpv, "deinterlace", s.value("video/deinterlace", false).toBool() ? "yes" : "no");
     mpv_set_property_string(mpv, "video-rotate", QByteArray::number(s.value("video/rotate", 0).toInt()).constData());
     applyTheme(s.value("darkTheme", true).toBool());
-    for (QAction *a : hotkeyActions(this))
+    for (QAction *a : hotkeyActions({this, playlist}))
         a->setShortcut(s.value("keys/" + a->objectName(), a->property("defaultKey")).value<QKeySequence>());
 }
 
@@ -127,6 +131,10 @@ void Player::openOptions()
     autoNext->setChecked(s.value("autoNext", false).toBool());
     form->addRow(single);
     form->addRow(autoNext);
+    auto *autoSkip = new QCheckBox("Skip intros and credits automatically (by chapter title)");
+    autoSkip->setObjectName("autoSkip");
+    autoSkip->setChecked(s.value("autoSkip", false).toBool());
+    form->addRow(autoSkip);
 
     auto *subsPage = new QWidget;
     auto *subsForm = new QFormLayout(subsPage);
@@ -164,7 +172,7 @@ void Player::openOptions()
 
     auto *keysPage = new QWidget;
     auto *keysLay = new QVBoxLayout(keysPage);
-    const QList<QAction *> actions = hotkeyActions(this);
+    const QList<QAction *> actions = hotkeyActions({this, playlist});
     auto *table = new QTableWidget(actions.size(), 2);
     table->setHorizontalHeaderLabels({"Command", "Key"});
     table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -210,6 +218,7 @@ void Player::openOptions()
     s.setValue("darkTheme", dark->isChecked());
     s.setValue("singleInstance", single->isChecked());
     s.setValue("autoNext", autoNext->isChecked());
+    s.setValue("autoSkip", autoSkip->isChecked());
     if (subFont->currentFont().family() != shownFont)
         s.setValue("subFont", subFont->currentFont().family());
     s.setValue("subSize", subSize->value());

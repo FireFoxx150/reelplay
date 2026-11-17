@@ -24,6 +24,7 @@
 #include <QFontComboBox>
 #include <QSpinBox>
 #include <QStyleFactory>
+#include <QFileDialog>
 #include <QInputDialog>
 #include <clocale>
 #include "../player.h"
@@ -170,6 +171,18 @@ class PlayerTest : public QObject
         p->openFiles({clipA, clipB});
         QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
         QTRY_VERIFY_WITH_TIMEOUT(pos() > 0, 5000);
+    }
+
+    // A 60 s clip: an intro chapter (0-20 s) and a main story (20-60 s).
+    void makeChapteredFile(const QString &out)
+    {
+        QString meta = writeFile("chapters.txt",
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=20000\ntitle=Intro\n"
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=20000\nEND=60000\ntitle=Main story\n");
+        QProcess ff;
+        ff.start("ffmpeg", {"-v", "error", "-y", "-i", clipA, "-i", meta, "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", out});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
     }
 
 private slots:
@@ -1280,14 +1293,8 @@ private slots:
     {
         if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
             QSKIP("ffmpeg is needed to write chapter titles");
-        QString meta = writeFile("chapters.txt",
-            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=20000\ntitle=Intro\n"
-            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=20000\nEND=60000\ntitle=Main story\n");
         QString out = tmp.filePath("chaptered.mkv");
-        QProcess ff;
-        ff.start("ffmpeg", {"-v", "error", "-y", "-i", clipA, "-i", meta, "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", out});
-        QVERIFY(ff.waitForFinished(60000));
-        QCOMPARE(ff.exitCode(), 0);
+        makeChapteredFile(out);
         p->openFiles({out});
         QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
         QTRY_COMPARE(p->chapters.size(), 2);
@@ -1297,6 +1304,81 @@ private slots:
         key("S"); // "Main story" is not skippable: nothing moves
         QTest::qWait(300);
         QVERIFY(pos() > 19 && pos() < 26);
+    }
+
+    void autoSkipIntro()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to write chapter titles");
+        QString out = tmp.filePath("auto.mkv");
+        makeChapteredFile(out);
+        p->openFiles({out}); // off by default: the intro plays
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTest::qWait(1000);
+        QVERIFY(pos() < 3);
+        onModal([](QDialog *d) {
+            if (auto *box = d->findChild<QCheckBox *>("autoSkip"))
+                box->setChecked(true);
+            d->accept();
+        });
+        trigger("&Options...");
+        QVERIFY(QTest::qWaitForWindowActive(p)); // focus returns from the dialog asynchronously
+        p->openFiles({out});
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(pos() - 20) < 1.5, 5000); // the intro is skipped without a key
+        QTest::qWait(500);
+        QVERIFY(pos() > 19 && pos() < 26); // the main story is not skipped
+    }
+
+    void smoothMotionAndShader()
+    {
+        startClips();
+        trigger("&Smooth Motion"); // commands are async: poll the properties
+        QTRY_COMPARE(p->prop("interpolation"), QString("yes"));
+        QTRY_COMPARE(p->prop("video-sync"), QString("display-resample"));
+        trigger("&Smooth Motion");
+        QTRY_COMPARE(p->prop("interpolation"), QString("no"));
+        QTRY_COMPARE(p->prop("video-sync"), QString("audio"));
+
+        QString shader = writeFile("upscale.glsl", "//!HOOK MAIN\n");
+        onModal([shader](QDialog *d) {
+            if (auto *fd = qobject_cast<QFileDialog *>(d))
+                fd->selectFile(shader);
+            d->accept();
+        });
+        trigger("Upscaling &Shader...");
+        QTRY_COMPARE(p->prop("glsl-shaders"), shader);
+        p->close();
+        newPlayer(); // the shader is remembered
+        QTRY_COMPARE(p->prop("glsl-shaders"), shader);
+        trigger("Clear Upscaling Shader");
+        QTRY_COMPARE(p->prop("glsl-shaders"), QString());
+    }
+
+    void remapShortcuts()
+    {
+        startClips();
+        onModal([](QDialog *d) {
+            if (auto *top = d->findChild<QKeySequenceEdit *>("View/Always on Top"))
+                top->setKeySequence(QKeySequence("Ctrl+Shift+T"));
+            if (auto *rm = d->findChild<QKeySequenceEdit *>("Playlist/Remove"))
+                rm->setKeySequence(QKeySequence("Ctrl+Shift+D"));
+            d->accept();
+        });
+        trigger("&Options...");
+        QVERIFY(QTest::qWaitForWindowActive(p)); // focus returns from the dialog asynchronously
+        QAction *top = p->findChild<QAction *>("View/Always on Top");
+        QVERIFY(top);
+        QCOMPARE(top->shortcut(), QKeySequence("Ctrl+Shift+T"));
+        key("Ctrl+A"); // the old key is no longer bound
+        QTest::qWait(300);
+        QVERIFY(!top->isChecked());
+        key("Ctrl+Shift+T");
+        QTRY_VERIFY(top->isChecked());
+
+        p->close();
+        newPlayer();
+        QCOMPARE(p->findChild<QAction *>("View/Always on Top")->shortcut(), QKeySequence("Ctrl+Shift+T"));
+        QCOMPARE(p->findChild<QAction *>("Playlist/Remove")->shortcut(), QKeySequence("Ctrl+Shift+D"));
     }
 
     void bookmarksPerFile()
