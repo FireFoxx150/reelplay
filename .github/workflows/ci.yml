@@ -16,19 +16,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake pkg-config qt6-base-dev libgl-dev libgl1-mesa-dri libmpv-dev \
-            xvfb x11-utils dbus-x11 libglib2.0-bin pulseaudio ffmpeg
+            xvfb openbox x11-utils dbus-x11 libglib2.0-bin ffmpeg
 
       - name: Configure and build
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
 
-      - name: Run tests under a virtual display and session bus
+      - name: Run tests under a virtual display with a window manager and session bus
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
+          REELPLAY_AO: "null"
         run: |
+          # Some tests need focus and always-on-top state, which only a window manager provides.
           xvfb-run -a dbus-run-session -- bash -c '
-            pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=ci"
+            openbox --sm-disable >/dev/null 2>&1 &
+            sleep 3
             ./build/test_player
           '
 

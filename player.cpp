@@ -617,6 +617,8 @@ Player::Player()
     // Load subtitles whose name contains the video's, also from Subs/ etc., like MPC-BE.
     mpv_set_option_string(mpv, "sub-auto", "fuzzy");
     mpv_set_option_string(mpv, "sub-file-paths", "Subs:subs:Subtitles:subtitles:Sub:sub");
+    if (const QByteArray ao = qgetenv("REELPLAY_AO"); !ao.isEmpty()) // e.g. "null": no audio device
+        mpv_set_option_string(mpv, "ao", ao.constData());
     mpv_set_option_string(mpv, "audio-display", "embedded-first"); // an audio file's cover art, if it has one
     mpv_set_option_string(mpv, "ytdl", "yes"); // YouTube & co. via yt-dlp, like VLC's lua scripts
     // Resume where each file was left off; our own dir so we don't mix with the mpv CLI.

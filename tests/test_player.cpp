@@ -1467,6 +1467,9 @@ private slots:
 
 int main(int argc, char *argv[])
 {
+    // Tests never need a real sound card, and a missing or busy audio server hangs mpv.
+    if (qEnvironmentVariableIsEmpty("REELPLAY_AO"))
+        qputenv("REELPLAY_AO", "null");
     QApplication app(argc, argv);
     app.setApplicationName("reelplay-test");
     app.setOrganizationName("reelplay-test");
