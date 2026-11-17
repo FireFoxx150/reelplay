@@ -33,7 +33,10 @@ static QList<QAction *> hotkeyActions(QWidget *w)
 static void applyTheme(bool dark)
 {
     static const QPalette original = qApp->palette();
+    static const QString originalStyle = qApp->style()->name();
     if (!dark) {
+        if (QStyle *style = QStyleFactory::create(originalStyle))
+            qApp->setStyle(style);
         qApp->setPalette(original);
         return;
     }

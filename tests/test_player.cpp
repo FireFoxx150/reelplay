@@ -23,6 +23,7 @@
 #include <QDBusConnectionInterface>
 #include <QFontComboBox>
 #include <QSpinBox>
+#include <QStyleFactory>
 #include <QInputDialog>
 #include <clocale>
 #include "../player.h"
@@ -176,6 +177,8 @@ private slots:
     {
         std::setlocale(LC_NUMERIC, "C");
         QStandardPaths::setTestModeEnabled(true); // keep settings + watch_later out of the real profile
+        // The dark theme gives back the style seen at first launch, so start from one other than Fusion.
+        qApp->setStyle(QStyleFactory::create("windows"));
         clipA = tmp.filePath("a.mkv");
         clipB = tmp.filePath("b.mkv");
         makeClip(clipA);
@@ -572,6 +575,18 @@ private slots:
         QVERIFY(!QSettings().contains("keys/Play/Play-Pause"));
         key("Space");
         QTRY_COMPARE(status(), QString("Playing"));
+    }
+
+    void darkThemeOffRestoresStyle()
+    {
+        QCOMPARE(qApp->style()->name(), QString("fusion")); // on by default
+        onModal([](QDialog *d) {
+            d->findChild<QCheckBox *>("darkTheme")->setChecked(false);
+            d->accept();
+        });
+        trigger("&Options...");
+        QVERIFY(QTest::qWaitForWindowActive(p)); // focus returns from the dialog asynchronously
+        QCOMPARE(qApp->style()->name(), QString("windows"));
     }
 
     // Real files in the containers/codecs VLC plays, encoded on the fly by libmpv.
