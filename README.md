@@ -15,7 +15,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 ```bash
 cmake --build build --target package
-sudo apt install ./build/reelplay_0.7.0_amd64.deb
+sudo apt install ./build/reelplay_0.8.0_amd64.deb
 ```
 
 Adds a menu entry and an icon, and offers reelplay under "Open With" for video and audio
@@ -63,6 +63,20 @@ folder" (off by default).
   on the system.
 - Denoise, sharpen, rotation, flip, deinterlace and the crop choice are remembered between
   sessions. A crop applies to every file.
+
+## Pitch, previews, cover art and packaging (0.8.0)
+
+- **Play > Audio Output > Equalizer > Open Equalizer:** a pitch slider, in semitones. It
+  changes the pitch and keeps the speed. It needs the file's sample rate, so it applies
+  once a file has loaded.
+- **Seek bar:** hovering shows a small frame from that point, cut with ffmpeg. Only local
+  files get previews.
+- **Audio files:** an embedded cover image is shown at its own size. mpv also shows a
+  cover.jpg or folder.jpg beside the file.
+- **Packaging:** `packaging/appimage/build-appimage.sh` builds an AppImage. It downloads its
+  tools without checksums, so it is not run automatically.
+- **CI:** `.github/workflows/ci.yml` builds the project, runs the tests under a virtual
+  display, and uploads the .deb. Not yet run on GitHub.
 
 ## Subtitles
 

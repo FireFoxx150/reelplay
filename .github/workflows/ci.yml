@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    # Ubuntu 24.04 ships Qt 6.4 and mpv 0.37, the versions Reelplay is developed against.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake pkg-config qt6-base-dev libgl-dev libgl1-mesa-dri libmpv-dev \
+            xvfb x11-utils dbus-x11 libglib2.0-bin pulseaudio ffmpeg
+
+      - name: Configure and build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Run tests under a virtual display and session bus
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          xvfb-run -a dbus-run-session -- bash -c '
+            pulseaudio --start --exit-idle-time=-1 --load="module-null-sink sink_name=ci"
+            ./build/test_player
+          '
+
+      - name: Build the Debian package
+        run: cmake --build build --target package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reelplay-deb
+          path: build/*.deb

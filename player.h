@@ -1,6 +1,9 @@
 #pragma once
 #include <QMainWindow>
 #include <QKeySequence>
+#include <QHash>
+#include <QImage>
+#include <QPoint>
 #include <functional>
 #include <mpv/client.h>
 #include "videowidget.h"
@@ -12,6 +15,7 @@ class QDockWidget;
 class QMenu;
 class QAction;
 class QTimer;
+class QProcess;
 class QActionGroup;
 class Mpris;
 
@@ -59,6 +63,10 @@ private:
     void setCrop(double aspect);
     void applyAudioFilters();
     void applyVisualizer();
+    void showPreview(double secs, const QPoint &globalPos);
+    void showCachedPreview();
+    void startPreviewJob();
+    void hidePreview();
     void saveAbSection(const QString &out);
     void startScreenshotSeries(int seconds);
     void stopScreenshotSeries();
@@ -116,6 +124,12 @@ private:
     bool hideMenu = false, hideControls = false, hideStatus = false;
     QAction *recordAct = nullptr;    // Play > Record Stream
     QAction *seriesAct = nullptr;    // File > Screenshot Series
+    QLabel *seekPreview = nullptr;   // frame preview above the seek bar
+    QTimer *previewDebounce = nullptr;
+    QProcess *previewProc = nullptr; // ffmpeg, one frame at a time
+    int previewWanted = -1;          // the whole second the preview is for
+    QPoint previewAnchor;
+    QHash<int, QImage> previewCache; // second -> frame; cleared when the file changes
     QTimer *seriesTimer = nullptr;
     QMenu *bookmarksMenu = nullptr;  // Play > Bookmarks
     int current = -1;

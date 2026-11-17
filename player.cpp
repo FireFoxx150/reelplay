@@ -29,6 +29,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <cmath>
 #include <QProcess>
 #include <QProxyStyle>
 #include <QRegularExpression>
@@ -616,6 +617,7 @@ Player::Player()
     // Load subtitles whose name contains the video's, also from Subs/ etc., like MPC-BE.
     mpv_set_option_string(mpv, "sub-auto", "fuzzy");
     mpv_set_option_string(mpv, "sub-file-paths", "Subs:subs:Subtitles:subtitles:Sub:sub");
+    mpv_set_option_string(mpv, "audio-display", "embedded-first"); // an audio file's cover art, if it has one
     mpv_set_option_string(mpv, "ytdl", "yes"); // YouTube & co. via yt-dlp, like VLC's lua scripts
     // Resume where each file was left off; our own dir so we don't mix with the mpv CLI.
     QByteArray watchDir = (QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/watch_later").toUtf8();
@@ -914,6 +916,8 @@ void Player::playIndex(int i)
         cropGroup->actions().first()->setChecked(true);
     if (recordAct && recordAct->isChecked())
         stopRecording(); // a recording follows one file, never two
+    previewCache.clear();
+    hidePreview();
     command({"loadfile", url.toUtf8()});
     addRecent(source);
     folderNeighbors[0] = folderNeighbors[1] = QString();
@@ -1209,6 +1213,81 @@ void Player::stopScreenshotSeries()
     osd("Screenshot series stopped");
 }
 
+// Frame previews on the seek bar: one frame cut with ffmpeg, cached per second. Only local
+// files get previews; a stream would have to be fetched again for every frame.
+void Player::showPreview(double secs, const QPoint &globalPos)
+{
+    if (stopped || current < 0 || !QFileInfo(playlist->item(current)->data(Qt::UserRole + 1).toString()).isFile()) {
+        hidePreview();
+        return;
+    }
+    if (!seekPreview) {
+        seekPreview = new QLabel(this, Qt::ToolTip | Qt::FramelessWindowHint);
+        seekPreview->setAttribute(Qt::WA_ShowWithoutActivating);
+        seekPreview->setStyleSheet("border: 1px solid #222; background: black;");
+    }
+    previewWanted = int(secs);
+    previewAnchor = globalPos;
+    if (previewCache.contains(previewWanted)) {
+        showCachedPreview();
+        return;
+    }
+    if (!previewDebounce) {
+        previewDebounce = new QTimer(this);
+        previewDebounce->setSingleShot(true);
+        previewDebounce->setInterval(150); // wait for the mouse to settle
+        connect(previewDebounce, &QTimer::timeout, this, &Player::startPreviewJob);
+    }
+    previewDebounce->start();
+}
+
+void Player::showCachedPreview()
+{
+    seekPreview->setPixmap(QPixmap::fromImage(previewCache.value(previewWanted)));
+    seekPreview->adjustSize();
+    const QPoint bar = seekBar->mapToGlobal(QPoint(0, 0));
+    seekPreview->move(previewAnchor.x() - seekPreview->width() / 2, bar.y() - seekPreview->height() - 6);
+    seekPreview->show();
+}
+
+void Player::startPreviewJob()
+{
+    if (previewCache.contains(previewWanted)) {
+        showCachedPreview();
+        return;
+    }
+    if (previewProc)
+        previewProc->kill(); // superseded by this request; its result is dropped below
+    const int at = previewWanted;
+    const QString src = playlist->item(current)->data(Qt::UserRole + 1).toString();
+    auto *proc = new QProcess(this);
+    previewProc = proc;
+    connect(proc, &QProcess::finished, this, [this, proc, at] {
+        const QImage img = QImage::fromData(proc->readAllStandardOutput(), "PNG");
+        if (proc == previewProc)
+            previewProc = nullptr;
+        proc->deleteLater();
+        if (img.isNull())
+            return;
+        if (previewCache.size() > 300)
+            previewCache.clear();
+        previewCache.insert(at, img);
+        if (at == previewWanted && seekPreview)
+            showCachedPreview();
+    });
+    proc->start("ffmpeg", {"-v", "error", "-ss", QString::number(at), "-i", src, "-frames:v", "1",
+                           "-vf", "scale=160:-2", "-f", "image2pipe", "-vcodec", "png", "-"});
+}
+
+void Player::hidePreview()
+{
+    previewWanted = -1;
+    if (previewDebounce)
+        previewDebounce->stop();
+    if (seekPreview)
+        seekPreview->hide();
+}
+
 void Player::applyChrome(bool fullscreen)
 {
     menuBar()->setVisible(!fullscreen && !hideMenu);
@@ -1342,6 +1421,13 @@ void Player::applyAudioFilters()
         filters << "lavfi=[acompressor]";
     if (s.value("eq/widen", false).toBool())
         filters << "lavfi=[extrastereo=m=2.5]";
+    const int semitones = s.value("eq/pitch", 0).toInt();
+    const double rate = prop("audio-params/samplerate").toDouble();
+    if (semitones != 0 && rate > 0) {
+        const double f = std::pow(2.0, semitones / 12.0);
+        filters << QString("lavfi=[asetrate=%1,aresample=%2,atempo=%3]")
+                       .arg(QString::number(rate * f, 'f', 0), QString::number(rate, 'f', 0), QString::number(1.0 / f, 'f', 6));
+    }
     mpv_set_property_string(mpv, "af", filters.join(',').toUtf8().constData());
 }
 
@@ -1398,8 +1484,18 @@ void Player::openEqualizer()
     });
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
-    grid->addWidget(reset, 5, 0, 1, eqBandHz.size());
-    grid->addWidget(buttons, 6, 0, 1, eqBandHz.size());
+    auto *pitch = new QSlider(Qt::Horizontal);
+    pitch->setObjectName("pitch");
+    pitch->setRange(-12, 12);
+    pitch->setValue(QSettings().value("eq/pitch", 0).toInt());
+    connect(pitch, &QSlider::valueChanged, &d, [this](int v) {
+        QSettings().setValue("eq/pitch", v);
+        applyAudioFilters();
+    });
+    grid->addWidget(new QLabel("Pitch (semitones, speed unchanged)"), 5, 0, 1, 4);
+    grid->addWidget(pitch, 5, 4, 1, eqBandHz.size() - 4);
+    grid->addWidget(reset, 6, 0, 1, eqBandHz.size());
+    grid->addWidget(buttons, 7, 0, 1, eqBandHz.size());
     d.exec();
 }
 
@@ -1649,6 +1745,9 @@ bool Player::eventFilter(QObject *obj, QEvent *ev)
         auto *me = static_cast<QMouseEvent *>(ev);
         int v = QStyle::sliderValueFromPosition(seekBar->minimum(), seekBar->maximum(), int(me->position().x()), seekBar->width());
         QToolTip::showText(me->globalPosition().toPoint(), fmtTime(v / 10.0), seekBar);
+        showPreview(v / 10.0, me->globalPosition().toPoint());
+    } else if (obj == seekBar && ev->type() == QEvent::Leave) {
+        hidePreview();
     }
     return QMainWindow::eventFilter(obj, ev);
 }

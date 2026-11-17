@@ -1400,6 +1400,69 @@ private slots:
         QVERIFY(QDir(dir).entryList({"*.png"}, QDir::Files).size() >= 2);
         QVERIFY(!p->seriesTimer->isActive());
     }
+
+    void pitchShift()
+    {
+        startClips();
+        onModal([](QDialog *d) {
+            d->findChild<QSlider *>("pitch")->setValue(2);
+            d->accept();
+        });
+        trigger("&Open Equalizer...");
+        QTRY_VERIFY(p->prop("af").contains("asetrate="));
+        QVERIFY(p->prop("af").contains("atempo="));
+        QCOMPARE(QSettings().value("eq/pitch").toInt(), 2);
+        // Zero semitones adds no pitch filter at all.
+        onModal([](QDialog *d) {
+            d->findChild<QSlider *>("pitch")->setValue(0);
+            d->accept();
+        });
+        trigger("&Open Equalizer...");
+        QTRY_VERIFY(!p->prop("af").contains("asetrate="));
+    }
+
+    void seekPreviewFrames()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed for frame previews");
+        startClips();
+        QTRY_VERIFY(p->seekBar->isEnabled());
+        QPointF at(p->seekBar->width() / 4.0, p->seekBar->height() / 2.0);
+        QMouseEvent move(QEvent::MouseMove, at, p->seekBar->mapToGlobal(at.toPoint()), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(p->seekBar, &move);
+        QTRY_VERIFY_WITH_TIMEOUT(p->seekPreview && p->seekPreview->isVisible(), 8000);
+        QCOMPARE(p->seekPreview->pixmap().width(), 160); // 320x240 source, scaled to 160 wide
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(p->seekBar, &leave);
+        QVERIFY(!p->seekPreview->isVisible());
+    }
+
+    void coverArtForAudio()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to make a file with cover art");
+        // Own folder: mpv also shows a cover.jpg beside an audio file, which other tests would see.
+        QDir().mkpath(tmp.filePath("art"));
+        const QString jpg = tmp.filePath("art/cover.jpg");
+        const QString mp3 = tmp.filePath("art/with_cover.mp3");
+        QProcess ff;
+        ff.start("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", jpg});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
+        ff.start("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=6:sample_rate=44100", "-i", jpg,
+                            "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-c:v", "mjpeg",
+                            "-disposition:v", "attached_pic", mp3});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
+        p->openFiles({mp3});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        // The embedded picture is shown at its own size, not a black window.
+        QTRY_COMPARE_WITH_TIMEOUT(p->prop("video-params/w").toInt(), 64, 5000);
+        // The visualiser stays off when there is a picture to show.
+        trigger("&Visualizer (audio files)");
+        QTest::qWait(1000);
+        QCOMPARE(p->prop("video-params/w").toInt(), 64);
+    }
 };
 
 int main(int argc, char *argv[])
