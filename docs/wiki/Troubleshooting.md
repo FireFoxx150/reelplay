@@ -108,12 +108,6 @@ busctl --user list | grep reelplay
 
 **Fix:** check the file names, and for a playlist, its order.
 
-### Switching the dark theme off keeps the Fusion style
-
-**Cause:** `applyTheme(false)` restores the original palette, but not the Fusion style, which stays until the next launch. This comes from reading the code. It has not been reproduced in a session.
-
-**Fix:** restart Reelplay. A fix would also reset the style when the theme is turned off.
-
 ### Starts slowly on X11
 
 **Cause:** the render path costs 0.5 to 1 s of start-up on the author's NVIDIA machine. On X11 the default is to embed mpv in a window, which is fast. The render path is used on Wayland, or when `REELPLAY_RENDER=gl` is set.
@@ -128,13 +122,9 @@ The Wayland path (the render API) is written but **not tested in a real Wayland 
 
 ### A shortcut I want to change is not in Options > Keys
 
-**Cause:** not every shortcut is remappable. Checkable items (Always on Top, the three Hide items, Statistics, Mute and the video filters), Ctrl+B, Ctrl+Shift+F, the media keys, Record Stream, and the playlist's keys cannot be changed in the Options dialog.
+**Cause:** not every shortcut is remappable. Checkable items (Always on Top, the three Hide items, Statistics and the video filters), Ctrl+B, Ctrl+Shift+F, the media keys and the playlist's keys cannot be changed in the Options dialog. The README lists them.
 
-**Fix:** none in the app yet. See [UI and menus](UI-and-Menus.md#hotkeys). The README says every shortcut can be changed, which is not true.
-
-### Screenshot series says it needs ffmpeg
-
-**Cause:** the README says so, and that line is out of date. Screenshot series uses mpv's own `screenshot-to-file`, so it does not need ffmpeg.
+**Fix:** none in the app yet. See [UI and menus](UI-and-Menus.md#hotkeys).
 
 ## Build and tests
 

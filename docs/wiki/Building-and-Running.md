@@ -19,7 +19,7 @@ Runtime tools, all optional:
 | `ffmpeg` | Seek-bar frame previews (Playback > Seek bar hover), Play > A-B Repeat > Save Section |
 | `yt-dlp` | Sites such as YouTube. mpv calls it when `ytdl` is on, which it always is in Reelplay |
 
-Screenshot series does **not** use ffmpeg. It calls mpv's own `screenshot-to-file`. (The README currently lists ffmpeg for it; that line is out of date.)
+Screenshot series does **not** use ffmpeg. It calls mpv's own `screenshot-to-file`.
 
 Install everything for a build on Ubuntu 24.04 or Linux Mint 22:
 

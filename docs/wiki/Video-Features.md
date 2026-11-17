@@ -78,14 +78,11 @@ Tests: `fullscreenHotkeys`, `fullscreenAutoControls`, `hiddenPartsSurviveFullscr
 Options > Player > Dark theme (on by default).
 
 - **On:** `applyTheme(true)` switches to the Fusion style and applies a dark palette.
-- **Off:** `applyTheme(false)` restores the palette the application had at first launch, which was captured in a static variable the first time `applyTheme()` ran.
-
-**Known issue:** switching the theme off restores the palette but **not the style**. The Fusion style stays until the next launch. This comes from reading the code: `applyTheme(false)` only calls `setPalette`. It has not been reproduced in a session. See [Troubleshooting](Troubleshooting.md#switching-the-dark-theme-off-keeps-the-fusion-style).
-
+- **Off:** `applyTheme(false)` restores the palette and the style the application had at first launch. Both are captured in static variables the first time `applyTheme()` runs.
 ## Video output modes
 
 The window draws video in one of two ways: embedded in a native window on X11, or through the render API on Wayland and when `REELPLAY_RENDER=gl` is set. The user sees the same features either way. The differences are in start-up time and in how always-on-top and keyboard input work, all covered in [mpv integration](mpv-Integration.md#video-output).
 
 ## Tests
 
-Colour and transforms: `videoAdjustments`, `videoTransforms`, `videoFilters`, `videoChoicesPersist`. Aspect and zoom: `aspectRatio`, `zoomHotkeys`. Window and chrome: `alwaysOnTop`, `chromeToggles`.
+Colour and transforms: `videoAdjustments`, `videoTransforms`, `videoFilters`, `videoChoicesPersist`. Aspect and zoom: `aspectRatio`, `zoomHotkeys`. Window and chrome: `alwaysOnTop`, `chromeToggles`. Dark theme: `darkThemeOffRestoresStyle`.

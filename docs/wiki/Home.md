@@ -30,7 +30,7 @@ This wiki is for people who build, change, test or package Reelplay. For end-use
 ## At a glance
 
 - **Version:** 0.8.0 (`CMakeLists.txt`). **Licence:** GPL-3.0-or-later.
-- **Size:** about 2,600 lines of application code in 8 files, plus a 1,500-line GUI test file with 73 test functions. Most of the logic is in `player.cpp`.
+- **Size:** about 2,600 lines of application code in 8 files, plus a 1,500-line GUI test file with 76 test functions. Most of the logic is in `player.cpp`.
 - **Platforms:** X11 is the tested path, on Linux Mint 22.3 and in CI on Ubuntu 24.04 (Qt 6.4, mpv 0.37). Wayland has a code path, but it has not been tested in a real Wayland session.
 - **Division of labour:** Reelplay owns the window, menus, playlist, settings and desktop integration. libmpv does the demuxing, decoding, rendering and track selection.
 

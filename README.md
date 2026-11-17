@@ -140,8 +140,8 @@ cmake --build build -j
 ./build/reelplay [files...]
 ```
 
-ffmpeg is needed at runtime for seek-bar previews, section saving and screenshot series. yt-dlp
-is optional, for YouTube and other sites.
+ffmpeg is needed at runtime for seek-bar previews and section saving. yt-dlp is optional, for
+YouTube and other sites.
 
 To build the Debian package:
 
@@ -188,7 +188,9 @@ checksums, so it isn't run automatically.
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 
-Right-click the video for the full menu. Every shortcut can be changed in Options.
+Right-click the video for the full menu. Most shortcuts can be changed on the Keys tab in Options.
+These are fixed: Ctrl+A, Ctrl+0, Ctrl+1, Ctrl+2, Ctrl+J, Ctrl+B, Ctrl+Shift+F, Delete in the
+playlist, and the media keys.
 
 ## Settings and data
 
@@ -217,6 +219,8 @@ headless, use Xvfb with a window manager and a session bus, with `REELPLAY_AO=nu
 
 Every push runs `.github/workflows/ci.yml`. It builds the project, runs the tests under a virtual
 display, and uploads the `.deb` as a run artifact.
+
+For how the code is laid out and how it works, see the [developer wiki](docs/wiki/Home.md).
 
 ## Known limitations
 

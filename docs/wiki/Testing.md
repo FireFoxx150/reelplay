@@ -2,7 +2,7 @@
 
 Reelplay's tests are GUI tests. They build the real `Player`, send it key and mouse events, and check libmpv's state through properties and the MPRIS interface. Nothing is mocked, so the tests need an X11 display, and some need a window manager and a session bus.
 
-The suite is one QtTest binary, `test_player`, built from `tests/test_player.cpp` and the same sources as the app. It contains 73 test functions.
+The suite is one QtTest binary, `test_player`, built from `tests/test_player.cpp` and the same sources as the app. It contains 76 test functions.
 
 ## Running
 
@@ -91,7 +91,7 @@ The `QTRY_*` macros are used for anything that depends on mpv having caught up, 
 
 ## Test groups
 
-The 73 tests, grouped by what they cover:
+The 76 tests, grouped by what they cover:
 
 | Group | Tests |
 |---|---|
@@ -100,7 +100,7 @@ The 73 tests, grouped by what they cover:
 | **Window and view** (15) | `fullscreenHotkeys`, `fullscreenAutoControls`, `singleClickPauses`, `doubleClickOnlyFullscreens`, `trackMenus`, `contextMenu`, `seekTooltip`, `chromeToggles`, `hiddenPartsSurviveFullscreen`, `alwaysOnTop`, `statsOverlay`, `propertiesDialogText`, `aspectRatio`, `resumePosition`, `settingsPersist` |
 | **Video** (7) | `videoAdjustments`, `videoTransforms`, `videoFilters`, `videoChoicesPersist`, `autoScreenshot`, `screenshotSeries`, `seekPreviewFrames` |
 | **Audio** (10) | `audioOutput`, `audioDevice`, `equalizerDialog`, `pitchShift`, `passthroughIsOptIn`, `visualizerForAudioOnly`, `visualiserDoesNotStallPlayback`, `coverArtForAudio`, `abSectionSave`, `recordStream` |
-| **Settings and options** (3) | `optionsApplyAndPersist`, `subtitleOptions`, `subtitlesFromSubsFolder` |
+| **Settings and options** (4) | `optionsApplyAndPersist`, `darkThemeOffRestoresStyle`, `subtitleOptions`, `subtitlesFromSubsFolder` |
 | **Desktop** (6) | `mprisRegistered`, `mprisControls`, `mprisMetadata`, `mprisSignals`, `mediaKeysWhenFocused`, `settingsDaemonMediaKeys` |
 
 `visualiserDoesNotStallPlayback` is the regression test for the stalled-playback bug. It fails without the fix in `applyVisualizer()`, and passes with it. See [mpv integration](mpv-Integration.md#track-selection-and-the-visualiser).

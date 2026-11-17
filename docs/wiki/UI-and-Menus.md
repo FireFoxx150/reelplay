@@ -42,7 +42,7 @@ A hotkey is a `QAction` shortcut. Reelplay adds every action to the window itsel
 | Kind | Made by | Remappable? |
 |---|---|---|
 | Menu items | `Player::act()` | Yes. The object name is `Menu/Item`. |
-| Checkable items (Always on Top, the three Hide items, Statistics, Mute, Flip, Denoise, and similar) | The `checkable()` helper in the constructor | **No.** They have no object name. |
+| Checkable items (Always on Top, the three Hide items, Statistics, Flip, Denoise, and similar) | The `checkable()` helper in the constructor | **No.** They have no object name. |
 | Other actions | Built directly in the constructor: Ctrl+B bookmark, Ctrl+Shift+F favourite, the media keys, the playlist's Delete, Save and similar | **No.** |
 
 ### How remapping works
@@ -53,7 +53,7 @@ The Options > Keys tab lists every action whose object name contains `/`. Only t
 
 The default key of each action is stored as the `defaultKey` property. "Reset All to Defaults" restores those.
 
-**The README says every shortcut can be changed in Options. That is not true:** the checkable items, the other direct actions listed above, and the playlist's keys cannot be changed. The README should say so.
+**Not every shortcut can be changed.** The checkable items, the other direct actions listed above, and the playlist's keys are fixed. The README lists them.
 
 ### Playlist keys
 
@@ -79,4 +79,4 @@ Most controls have an object name matching their setting key (for example `hwdec
 
 ## Dark theme
 
-Options > Player > Dark theme. See [Video features](Video-Features.md#dark-theme), including the known issue with switching it off.
+Options > Player > Dark theme. See [Video features](Video-Features.md#dark-theme).

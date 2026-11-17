@@ -71,7 +71,7 @@ The test `abSectionSave` skips when ffmpeg is missing.
 
 **Automatic name:** `<file base name>_<position hh.mm.ss>_<wall-clock hhmmsszzz>.png`, in the Screenshot folder set in Options, or `~/Pictures/reelplay` if none is set. The position and the clock time keep the names unique.
 
-**Method:** mpv's `screenshot-to-file <path> video`. The `video` mode takes the video frame without subtitles or the on-screen display. This does **not** use ffmpeg, which the README says it does for screenshot series; that line is out of date.
+**Method:** mpv's `screenshot-to-file <path> video`. The `video` mode takes the video frame without subtitles or the on-screen display. This does **not** use ffmpeg.
 
 **Series:** the timer keeps running across file changes. It checks `!stopped` on each tick, so it takes no screenshots while nothing is playing. Interval range 1 to 3600 seconds, default 10.
 
