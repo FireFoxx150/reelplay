@@ -1,177 +1,236 @@
 # Reelplay
 
-Classic-style media player for Linux on Qt 6 + libmpv, inspired by MPC-BE.
-(Formerly newmpc-be; not affiliated with the MPC-BE project.)
+A classic-style media player for Linux, built on Qt 6 and libmpv. It keeps the look and the
+keyboard-driven feel of MPC-BE (Media Player Classic - Black Edition), but it is not affiliated
+with that project. Reelplay was formerly called newmpc-be.
 
-## Build
+![Reelplay playing a video with the playlist open](docs/screenshots/main-window.png)
 
-```bash
-sudo apt install cmake qt6-base-dev libmpv-dev
-cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-./build/reelplay [files...]
-```
+Reelplay plays what VLC plays, runs from a single window by default, and remembers where you
+left off in every file.
 
-## Install (.deb)
+## Features
 
-```bash
-cmake --build build --target package
-sudo apt install ./build/reelplay_0.8.0_amd64.deb
-```
+### Playback
 
-Adds a menu entry and an icon, and offers reelplay under "Open With" for video and audio
-files. To make it the default player: right-click a video, Properties, then Open With.
+- **Everything libmpv and FFmpeg can decode**, plus DVD and Blu-ray folders, `VIDEO_TS.IFO`
+  and `.iso` images, Audio CDs, and network streams (http, rtsp, rtmp, srt, udp, mms, HLS).
+  See [Formats](#formats).
+- **Seek bar:** click to jump straight to a point. Hover to see the time and a frame preview
+  from that point. Previews are cut with ffmpeg, so they need local files.
+- **Chapters:** Play > Chapters, Ctrl+PgDn / Ctrl+PgUp, and S to skip an intro, recap, opening,
+  or credits chapter (matched by its title).
+- **Repeat and A-B:** repeat the file or the playlist, and set A and B markers to loop a section.
+- **Resume:** each file starts where you left it. Favorites and per-file bookmarks let you
+  jump back to a place later.
+- **Record stream (experimental):** Play > Record Stream copies the stream to a file. mpv marks
+  this feature experimental: the file is written when recording stops, and a recording started
+  partway through can begin with frames that won't decode.
 
-## Single window
+![Seek bar frame preview](docs/screenshots/seek-preview.png)
 
-Opening a file while reelplay is running (e.g. double-clicking in the file manager)
-plays it in the existing window instead of starting a second one, like MPC-BE. Turn it
-off in Options > Player. Also there: "When a file ends, play the next file in its
-folder" (off by default).
+### Picture
 
-## Picture, sound and favorites
+- **View > Video:** brightness, contrast, saturation, gamma and hue; rotate; flip horizontally;
+  deinterlace; crop to 4:3, 16:9, 1.85:1 or 2.35:1 (centred).
+- **Scaling:** default, sharp (EWA Lanczos) or smooth (Spline36) upscaling.
+- **Filters:** HDR tone mapping, denoise and sharpen.
+- **Window:** always on top, fullscreen (Alt+Enter, or double-click; Esc leaves), zoom at 50%,
+  100% or 200%, and the menu bar, controls and status bar can each be hidden.
+- **Screenshots:** F5 saves one automatically, Alt+I asks where to save it, and File > Screenshot
+  Series saves one every N seconds.
+- **Statistics:** Ctrl+J shows codec, size, dropped frames and sync.
 
-- **View > Video:** adjust brightness, contrast, saturation, gamma and hue; rotate;
-  flip horizontally; deinterlace; crop to 4:3, 16:9, 1.85:1 or 2.35:1 (centred).
-- **Play > Audio Output:** pick the output device, normalize volume, and equalizer presets
-  (Flat, Bass Boost, Treble Boost, Voice).
-- **Play > After Playback:** do nothing, exit, shut down or suspend when the playlist ends.
-- **Favorites:** remember a file at its current position and jump back to it later.
+Denoise, sharpen, rotation, flip, deinterlace and the crop choice are remembered between sessions.
+A crop applies to every file.
 
-## Video, audio and bookmarks (0.6.0)
+### Audio
 
-- **View > Video > Scaling:** default, sharp (EWA Lanczos) or smooth (Spline36) upscaling.
-- **View > Video:** HDR tone mapping on or off, denoise, and sharpen.
-- **Play > Audio Output > S/PDIF Passthrough:** sends AC3, E-AC3, DTS and TrueHD to a
-  receiver undecoded. It is off by default. On a stereo device it gives silence or garbled
-  sound, so only turn it on with a receiver connected to the output you have selected.
-- **Play > Bookmarks:** remember times inside a file and jump back to them.
-- **Play > Record Stream (Experimental):** copies the stream to a file. mpv marks this
-  feature experimental: the file is written when recording stops, and a recording started
-  partway through can have frames that won't decode. Start it at the beginning of the file.
-  Changing file ends the recording.
+- **Output:** choose the device under Play > Audio Output > Device, and normalize the volume.
+- **Equaliser:** Play > Audio Output > Equalizer > Open Equalizer. It has 10 bands from 31 Hz to
+  16 kHz (-12 to +12 dB), a compressor, stereo widen, and presets (Flat, Bass Boost, Treble Boost,
+  Voice). Bands above 45% of a file's sample rate are skipped, because ffmpeg rejects them.
+- **Pitch:** the same dialog has a pitch slider in semitones. It changes the pitch and keeps the
+  speed.
+- **S/PDIF passthrough:** sends AC3, E-AC3, DTS and TrueHD to a receiver undecoded. It is off by
+  default. On a stereo device it gives silence or garbled sound, so only turn it on with a receiver
+  connected to the selected output.
+- **Visualiser:** View > Visualizer (audio files) draws a spectrum where the picture would be, for
+  files with no video track.
+- **Cover art:** an embedded cover image is shown. A `cover.jpg` or `folder.jpg` beside the file
+  also works.
+- **Save section:** Play > A-B Repeat > Save Section cuts the A-B section to a new file with ffmpeg.
+  The cut starts at the keyframe before A, so the section can begin a little early.
+- **After playback:** Play > After Playback can do nothing, exit, shut down, or suspend when the
+  playlist ends.
 
-## Equaliser, visualiser, screenshots and sections (0.7.0)
+<table>
+<tr>
+<td><img src="docs/screenshots/visualiser.png" alt="Spectrum visualiser for an audio file"></td>
+<td><img src="docs/screenshots/cover-art.png" alt="Embedded cover art shown for an MP3"></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/equaliser.png" alt="Equaliser dialog with the Bass Boost preset"></td>
+<td></td>
+</tr>
+</table>
 
-- **Play > Audio Output > Equalizer > Open Equalizer:** 10 bands (31 Hz to 16 kHz, -12 to
-  +12 dB), with a compressor and stereo widen. Presets set the bands. Bands above 45% of a
-  file's sample rate are skipped, because ffmpeg rejects them.
-- **View > Visualizer (audio files):** draws a spectrum where the picture would be, for
-  files with no video.
-- **File > Screenshot Series:** saves a screenshot every N seconds to the screenshot folder.
-- **Play > A-B Repeat > Save Section:** cuts the A-B section to a new file with ffmpeg. The
-  cut starts at the keyframe before A, so the section can begin a little early. Needs ffmpeg
-  on the system.
-- Denoise, sharpen, rotation, flip, deinterlace and the crop choice are remembered between
-  sessions. A crop applies to every file.
+### Files and playlists
 
-## Pitch, previews, cover art and packaging (0.8.0)
+- **Open:** files, folders (natural sort, so ep2 comes before ep10), recent files, a URL, or an
+  Audio CD.
+- **Playlist (Ctrl+7):** drag to reorder. Right-click to remove, randomize, save as M3U, or clear.
+- **Playlist files:** `.m3u`, `.m3u8`, `.pls`, `.xspf`, `.asx`/`.wax`/`.wvx`, `.wpl`, `.ram` and
+  `.cue` open as playlists.
+- **Single window:** opening a file while Reelplay is running (for example, double-clicking in the
+  file manager) plays it in the existing window. Turn this off in Options. Options also has "play
+  the next file in its folder when one ends", which is off by default.
+- **Walking a folder:** when you open a single file, Next and Previous step through its folder,
+  like MPC-BE.
 
-- **Play > Audio Output > Equalizer > Open Equalizer:** a pitch slider, in semitones. It
-  changes the pitch and keeps the speed. It needs the file's sample rate, so it applies
-  once a file has loaded.
-- **Seek bar:** hovering shows a small frame from that point, cut with ffmpeg. Only local
-  files get previews.
-- **Audio files:** an embedded cover image is shown at its own size. mpv also shows a
-  cover.jpg or folder.jpg beside the file.
-- **Packaging:** `packaging/appimage/build-appimage.sh` builds an AppImage. It downloads its
-  tools without checksums, so it is not run automatically.
-- **CI:** `.github/workflows/ci.yml` builds the project, runs the tests under a virtual
-  display, and uploads the .deb. Not yet run on GitHub.
+### Subtitles
 
-## Subtitles
-
-Subtitles named like the video (e.g. `film.en.srt` for `film.mkv`) load automatically,
-also from a `Subs/` or `Subtitles/` subfolder. Font, size, color and position are in
+Subtitles named like the video (for example `film.en.srt` for `film.mkv`) load automatically,
+including from a `Subs/` or `Subtitles/` subfolder. Font, size, colour and position are in
 Options > Subtitles.
+
+### Desktop integration
+
+- **Multimedia keys:** Play, Pause, Stop, Next and Previous work even when Reelplay isn't focused.
+  On Cinnamon, GNOME and MATE the player claims the keys from the desktop, so the last player you
+  used gets them.
+- **MPRIS:** Reelplay shows up in the sound applet and works with `playerctl`. Volume keys stay
+  with the system volume, as in VLC.
+- **Open With:** the package adds a menu entry, an icon, and "Open With" entries for video and
+  audio files.
 
 ## Formats
 
-Plays what VLC plays, through libmpv/FFmpeg: all of VLC 3.0's video and audio file
-extensions (Open Folder picks them up), its file types for "Open With", and its playlist
-formats (.m3u/.m3u8, .pls, .xspf, .asx/.wax/.wvx, .wpl, .ram, .cue). Also DVD/Blu-ray
-folders, `VIDEO_TS.IFO` and DVD/Blu-ray `.iso` images, Audio CD (File > Open Audio CD),
-and streams (http, rtsp, rtmp, srt, udp, mms, HLS). `./build/test_player formats` plays a
-generated file for 42 container/codec combinations.
+Reelplay plays what VLC plays, through libmpv and FFmpeg. It covers all of VLC 3.0's video and
+audio file extensions (Open Folder picks them up), the same file types for "Open With", and the
+playlist formats listed above.
 
-Not supported: MIDI and SID music (VLC needs extra plugins for those too).
-Sites like YouTube go through yt-dlp, which must be recent: Mint's packaged version
-(2024.04) no longer works with YouTube.
+Not supported: MIDI and SID music. VLC needs extra plugins for those too.
 
-## Multimedia keys
+Sites such as YouTube go through yt-dlp, which must be recent. Mint's packaged version (2024.04)
+no longer works with YouTube.
 
-Play/Pause, Stop, Next and Previous keys control the player even when its window isn't
-focused. On Cinnamon, GNOME and MATE the player claims the keys from the desktop
-(GrabMediaPlayerKeys), so it gets them even if a browser is also open; whichever player
-you used last wins. It's also an MPRIS player, so it shows up in the sound applet and
-works with `playerctl` and other desktops' media keys. Volume keys stay with the system
-volume, as in VLC.
+## Install
 
-With a single file open (e.g. double-clicked in the file manager), Next/Previous (media
-keys, PgDn/PgUp, the toolbar buttons) move to the next/previous file in its folder, like
-MPC-BE.
+### Debian and Ubuntu package
 
-## X11 and Wayland
+Download the `.deb` from the [releases page](https://github.com/FireFoxx150/reelplay/releases), or
+build it yourself (see below). Then:
 
-On X11 mpv draws straight into the window (fastest startup). On Wayland it draws through
-libmpv's OpenGL render API, because Wayland can't embed another program's window. To try
-the Wayland code path on X11: `REELPLAY_RENDER=gl ./build/reelplay`.
+```bash
+sudo apt install ./reelplay_0.8.0_amd64.deb
+```
 
-## Hotkeys (MPC-BE defaults)
+The package replaces and conflicts with `newmpc-be`.
+
+### Build from source
+
+Developed on Linux Mint 22.3 and tested in CI on Ubuntu 24.04. Both are Ubuntu 24.04 based and
+ship Qt 6.4 and mpv 0.37.
+
+```bash
+sudo apt install cmake pkg-config qt6-base-dev libgl-dev libmpv-dev ffmpeg
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/reelplay [files...]
+```
+
+ffmpeg is needed at runtime for seek-bar previews, section saving and screenshot series. yt-dlp
+is optional, for YouTube and other sites.
+
+To build the Debian package:
+
+```bash
+cmake --build build --target package
+```
+
+`packaging/appimage/build-appimage.sh` builds an AppImage. It downloads its tools without
+checksums, so it isn't run automatically.
+
+## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| Space | Play/Pause |
+| Space | Play / pause |
 | . | Stop |
-| Left / Right | Jump 5 s |
-| Shift+Left / Right | Jump 30 s |
-| Ctrl+Left / Right | Frame step back / forward |
+| Left / Right | Jump 5 s back / forward |
+| Shift+Left / Shift+Right | Jump 30 s back / forward |
+| Ctrl+Left / Ctrl+Right | Frame step back / forward |
 | PgUp / PgDn | Previous / next file |
 | Up / Down, mouse wheel | Volume |
 | Ctrl+M | Mute |
 | Alt+Enter, double-click | Fullscreen (Esc exits) |
 | Ctrl+7 | Playlist |
 | Ctrl+Up / Ctrl+Down / Ctrl+R | Speed +0.1 / -0.1 / reset |
-| F1 / F2 | Subtitle delay -/+ 100 ms |
-| Numpad - / + | Audio delay -/+ 10 ms |
-| [ / ] / \\ | Set A-B repeat marker A / B / clear |
+| F1 / F2 | Subtitle delay -100 / +100 ms |
+| Numpad - / + | Audio delay -10 / +10 ms |
+| [ / ] / \\ | Set A-B marker A / B / clear |
 | Alt+1 / Alt+2 / Alt+3 | Zoom 50% / 100% / 200% |
-| Right-click | Full menu |
-| F5 / Alt+I | Save screenshot (auto-named / choose file) |
+| F5 / Alt+I | Save screenshot (automatic name / choose file) |
 | Shift+F10 | File properties |
-| O | Options (hardware decoding, languages, screenshot folder, dark theme, hotkeys) |
+| O | Options |
 | Delete (in playlist) | Remove selected |
 | Ctrl+O / Ctrl+U / Ctrl+L | Open file / URL / subtitle |
-| Ctrl+D | Open DVD/BD (folder with VIDEO_TS or BDMV) |
+| Ctrl+D | Open DVD or Blu-ray folder |
 | Ctrl+G | Go to time (hh:mm:ss, mm:ss or seconds) |
-| Ctrl+PgDn / Ctrl+PgUp | Next / previous chapter (also Play > Chapters) |
+| Ctrl+PgDn / Ctrl+PgUp | Next / previous chapter |
+| S | Skip the current chapter if it is an intro or credits |
 | Ctrl+A | Always on top |
 | Ctrl+0 / Ctrl+1 / Ctrl+2 | Hide menu bar / controls / status bar |
-| Ctrl+J | Statistics overlay (codec, size, dropped frames, sync) |
+| Ctrl+J | Statistics overlay |
+| Ctrl+B | Bookmark the current time |
 | Ctrl+Shift+F | Add the current file to Favorites |
-| Ctrl+B | Add a bookmark at the current time (Play > Bookmarks lists this file's) |
-| S | Skip the current chapter if it is an intro or credits (by its title) |
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 
-Also: aspect ratio presets (View), repeat file/playlist (Play), Recent Files and
-Open Folder (File; natural sort, e.g. ep2 before ep10), seek-bar hover time.
-Playlist: drag to reorder, right-click for Remove / Randomize / Save (.m3u) / Clear;
-.m3u/.m3u8 files open as playlists. In fullscreen, move the mouse to the bottom edge
-for the controls; the cursor hides after 2 s.
+Right-click the video for the full menu. Every shortcut can be changed in Options.
 
-Volume, window size/position, playlist panel and repeat mode are remembered between runs
-(`~/.config/reelplay/`). Each file resumes where you left off
-(`~/.local/share/reelplay/watch_later/`).
+## Settings and data
 
-## Tests
+- **Settings:** `~/.config/reelplay/reelplay.conf`. Volume, window position and size, the playlist
+  panel and repeat mode are remembered between runs.
+- **Resume positions:** `~/.local/share/reelplay/watch_later/`.
 
-GUI tests drive the real window with key and mouse events (needs an X11 display):
+## Platforms
+
+Reelplay is developed and tested on X11. On X11, mpv draws straight into the window, which gives the
+fastest startup. On Wayland, mpv draws through libmpv's OpenGL render API, because Wayland can't
+embed another program's window. That path is written but not yet tested on a Wayland session. To
+exercise it on X11, run `REELPLAY_RENDER=gl ./build/reelplay`.
+
+## Tests and CI
+
+The GUI tests drive the real window with key and mouse events, and they need an X11 display:
 
 ```bash
 ./build/test_player
 ```
 
+Some tests check focus and always-on-top state, which only a window manager provides. To run them
+headless, use Xvfb with a window manager and a session bus, with `REELPLAY_AO=null` and
+`REELPLAY_VO=null`, as `.github/workflows/ci.yml` does.
+
+Every push runs `.github/workflows/ci.yml`. It builds the project, runs the tests under a virtual
+display, and uploads the `.deb` as a run artifact.
+
+## Known limitations
+
+- Stream recording is experimental (see above).
+- Seek-bar previews work only for local files.
+- MIDI and SID music aren't supported.
+- YouTube needs a recent yt-dlp.
+
 ## Licence
 
-GPL-3.0-or-later (see `LICENSE`). Copyright 2026 Matthew Allwood. Reelplay links to
-libmpv and FFmpeg, which Debian/Ubuntu build as GPL-3, so it must stay GPL-compatible.
+GPL-3.0-or-later (see `LICENSE`). Copyright 2026 Matthew Allwood.
+
+Reelplay links to libmpv and FFmpeg, which Debian and Ubuntu build as GPL-3, so it must stay
+GPL-compatible.
+
+The screenshots show generated sample media (fractal and gradient video, synthetic tones and a
+drawn cover), not copyrighted material.
