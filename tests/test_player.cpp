@@ -1380,6 +1380,34 @@ private slots:
         QTRY_COMPARE(p->prop("lavfi-complex"), QString(""));
     }
 
+    // Clearing the spectrum graph must hand the audio and video tracks back, or playback stops.
+    void visualiserDoesNotStallPlayback()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to make an audio-only file");
+        startClips();
+        const QString mp3 = tmp.filePath("long-tone.mp3");
+        QProcess ff;
+        ff.start("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=20:sample_rate=44100", "-c:a", "libmp3lame", mp3});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
+        trigger("&Visualizer (audio files)");
+        p->openFiles({mp3});
+        QTRY_COMPARE_WITH_TIMEOUT(p->prop("video-params/w").toInt(), 640, 5000);
+        // Visualiser off while the sound plays: the picture goes, the sound must go on.
+        trigger("&Visualizer (audio files)");
+        double before = pos();
+        QTRY_VERIFY_WITH_TIMEOUT(pos() > before + 0.5, 5000);
+        // Visualiser on, then a file with real video: playback must carry on there too.
+        trigger("&Visualizer (audio files)");
+        QTRY_COMPARE_WITH_TIMEOUT(p->prop("video-params/w").toInt(), 640, 5000);
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(p->prop("vid") != QString("no"), 5000); // the picture comes back too
+        before = pos();
+        QTRY_VERIFY_WITH_TIMEOUT(pos() > before + 0.5, 5000);
+    }
+
     void abSectionSave()
     {
         if (QStandardPaths::findExecutable("ffmpeg").isEmpty())

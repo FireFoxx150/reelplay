@@ -1169,7 +1169,24 @@ void Player::applyVisualizer()
     for (int i = 0; i < n && !video; ++i)
         video = prop(QByteArray("track-list/") + QByteArray::number(i) + "/type") == "video";
     const bool wanted = QSettings().value("visualizer", false).toBool() && !stopped && !video;
+    const bool active = !prop("lavfi-complex").isEmpty();
     command({"set", "lavfi-complex", wanted ? "[aid1]asplit[ao][v];[v]showspectrum=s=640x360[vo]" : ""});
+    // The graph takes the audio track (aid reads "no" while it runs), and clearing it does not give
+    // the track back: playback stops, and a video's picture stays black. Select the first audio and
+    // video track again, by id.
+    auto reselect = [this, n](const char *type, const char *property) {
+        for (int i = 0; i < n; ++i) {
+            const QByteArray idx = QByteArray::number(i);
+            if (prop("track-list/" + idx + "/type") == type) {
+                command({"set", property, prop("track-list/" + idx + "/id").toUtf8()});
+                return;
+            }
+        }
+    };
+    if (active && !wanted) {
+        reselect("audio", "aid");
+        reselect("video", "vid");
+    }
 }
 
 // Cuts the A-B section out of the current local file with ffmpeg. Cuts start on the
