@@ -96,7 +96,8 @@ static const QString openFilter = "Media files (" + (mediaFilters + playlistFilt
 static QStringList mediaInFolder(const QDir &dir)
 {
     QStringList names = dir.entryList(mediaFilters, QDir::Files);
-    QCollator natural;
+    // Explicit locale: the default (C on CI) collator sorted "ep10" before "ep2".
+    QCollator natural(QLocale::English);
     natural.setNumericMode(true);
     std::sort(names.begin(), names.end(), natural);
     return names;
