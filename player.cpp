@@ -6,6 +6,8 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QCheckBox>
+#include <QGridLayout>
 #include <QPushButton>
 #include <QWindow>
 #include <QApplication>
@@ -27,6 +29,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QProcess>
 #include <QProxyStyle>
 #include <QRegularExpression>
 #include <QUrl>
@@ -351,6 +354,23 @@ Player::Player()
         if (!f.isEmpty()) screenshot(f);
     });
     act(file, "Save Image (&Auto)", QKeySequence("F5"), [this] { if (!stopped) screenshot(autoScreenshotPath()); });
+    seriesAct = file->addAction("Screenshot Series...");
+    seriesAct->setCheckable(true);
+    connect(seriesAct, &QAction::toggled, this, [this](bool on) {
+        if (!on) {
+            stopScreenshotSeries();
+            return;
+        }
+        bool ok = false;
+        const int secs = QInputDialog::getInt(this, "Screenshot Series", "Seconds between screenshots:", 10, 1, 3600, 1, &ok);
+        if (!ok) {
+            QSignalBlocker block(seriesAct);
+            seriesAct->setChecked(false);
+            return;
+        }
+        startScreenshotSeries(secs);
+    });
+    addAction(seriesAct);
     act(file, "&Properties", QKeySequence("Shift+F10"), [this] {
         if (!stopped) QMessageBox::information(this, "Properties", propertiesText());
     });
@@ -395,14 +415,19 @@ Player::Player()
     checkable(view, "Hide Con&trols", QKeySequence("Ctrl+1"), false, [this](bool on) { hideControls = on; applyChrome(isFullScreen()); });
     checkable(view, "Hide &Status Bar", QKeySequence("Ctrl+2"), false, [this](bool on) { hideStatus = on; applyChrome(isFullScreen()); });
     checkable(view, "&Statistics", QKeySequence("Ctrl+J"), false, [this](bool on) { toggleStats(on); });
+    checkable(view, "&Visualizer (audio files)", QKeySequence(), QSettings().value("visualizer", false).toBool(), [this](bool on) {
+        QSettings().setValue("visualizer", on);
+        applyVisualizer();
+    });
     QMenu *videoMenu = view->addMenu("&Video");
     act(videoMenu, "&Adjust Colors...", QKeySequence(), [this] { openVideoAdjust(); });
     act(videoMenu, "Rotate &Clockwise", QKeySequence(), [this] { rotateVideo(90); });
     act(videoMenu, "Rotate &Counter-clockwise", QKeySequence(), [this] { rotateVideo(-90); });
-    checkable(videoMenu, "Flip &Horizontal", QKeySequence(), false, [this](bool on) {
-        command({"vf", on ? "add" : "remove", on ? "@flip:hflip" : "@flip"});
+    checkable(videoMenu, "Flip &Horizontal", QKeySequence(), QSettings().value("video/flip", false).toBool(), [this](bool on) { setVideoFilter("flip", "hflip", on); });
+    checkable(videoMenu, "&Deinterlace", QKeySequence(), QSettings().value("video/deinterlace", false).toBool(), [this](bool on) {
+        command({"set", "deinterlace", on ? "yes" : "no"});
+        QSettings().setValue("video/deinterlace", on);
     });
-    checkable(videoMenu, "&Deinterlace", QKeySequence(), false, [this](bool on) { command({"set", "deinterlace", on ? "yes" : "no"}); });
     QMenu *cropMenu = videoMenu->addMenu("&Crop");
     cropGroup = new QActionGroup(cropMenu);
     for (auto [label, aspect] : {std::pair{"No Crop", 0.0}, {"Crop 4:3", 4.0 / 3}, {"Crop 16:9", 16.0 / 9}, {"Crop 1.85:1", 1.85}, {"Crop 2.35:1", 2.35}}) {
@@ -410,8 +435,22 @@ Player::Player()
         a->setCheckable(true);
         a->setChecked(aspect == 0);
         cropGroup->addAction(a);
+        a->setData(aspect);
         connect(a, &QAction::triggered, this, [this, aspect] { setCrop(aspect); });
     }
+    QMenu *scaleMenu = videoMenu->addMenu("&Scaling");
+    auto *scaleGroup = new QActionGroup(scaleMenu);
+    const QString scale = QSettings().value("scale", "bilinear").toString();
+    for (auto [label, filter] : {std::pair{"&Default (Bilinear)", "bilinear"}, {"&Sharp (EWA Lanczos)", "ewa_lanczossharp"}, {"S&mooth (Spline36)", "spline36"}}) {
+        QAction *a = scaleMenu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(scale == filter);
+        scaleGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, filter] { setScale(filter); });
+    }
+    checkable(videoMenu, "&HDR Tone Mapping", QKeySequence(), QSettings().value("toneMap", true).toBool(), [this](bool on) { setToneMap(on); });
+    checkable(videoMenu, "&Denoise", QKeySequence(), QSettings().value("video/denoise", false).toBool(), [this](bool on) { setVideoFilter("denoise", "hqdn3d", on); });
+    checkable(videoMenu, "&Sharpen", QKeySequence(), QSettings().value("video/sharpen", false).toBool(), [this](bool on) { setVideoFilter("sharpen", "unsharp", on); });
 
     QMenu *play = menuBar()->addMenu("&Play");
     act(play, "&Play/Pause", QKeySequence("Space"), [this] { togglePause(); });
@@ -448,6 +487,16 @@ Player::Player()
     act(ab, "Set Marker &A", QKeySequence("["), [this] { command({"set", "ab-loop-a", prop("time-pos").toUtf8()}); osd("A marker set"); });
     act(ab, "Set Marker &B", QKeySequence("]"), [this] { command({"set", "ab-loop-b", prop("time-pos").toUtf8()}); osd("B marker set"); });
     act(ab, "&Clear Markers", QKeySequence("\\"), [this] { command({"set", "ab-loop-a", "no"}); command({"set", "ab-loop-b", "no"}); osd("A-B repeat off"); });
+    act(ab, "Save &Section...", QKeySequence(), [this] {
+        if (stopped || current < 0 || prop("ab-loop-a") == "no" || prop("ab-loop-b") == "no") {
+            osd("Set A and B markers on a file first");
+            return;
+        }
+        const QString src = playlist->item(current)->data(Qt::UserRole + 1).toString();
+        const QString out = QFileDialog::getSaveFileName(this, "Save Section", QFileInfo(src).completeBaseName() + "_section.mkv", "Media (*.mkv *.mp4)");
+        if (!out.isEmpty())
+            saveAbSection(out);
+    });
     QMenu *repeatMenu = play->addMenu("R&epeat");
     auto *repeatGroup = new QActionGroup(repeatMenu);
     repeat = decltype(repeat)(QSettings().value("repeat", RepeatOff).toInt());
@@ -462,6 +511,30 @@ Player::Player()
             command({"set", "loop-file", mode == RepeatFile ? "inf" : "no"});
         });
     }
+    bookmarksMenu = play->addMenu("&Bookmarks");
+    connect(bookmarksMenu, &QMenu::aboutToShow, this, &Player::rebuildBookmarksMenu);
+    QAction *addBm = new QAction(this);
+    addBm->setShortcut(QKeySequence("Ctrl+B"));
+    connect(addBm, &QAction::triggered, this, &Player::addBookmark);
+    addAction(addBm); // hotkey only; the menu builds its own entries
+
+    recordAct = play->addAction("Record Stream (Experimental)...");
+    recordAct->setCheckable(true);
+    connect(recordAct, &QAction::toggled, this, [this](bool on) {
+        if (!on) {
+            stopRecording();
+            return;
+        }
+        const QString path = QFileDialog::getSaveFileName(this, "Record Stream", {}, "Media (*.mkv *.mp4 *.ts *.webm);;All files (*)");
+        if (path.isEmpty()) {
+            QSignalBlocker block(recordAct);
+            recordAct->setChecked(false);
+            return;
+        }
+        startRecording(path);
+    });
+    addAction(recordAct);
+
     QMenu *afterMenu = play->addMenu("After Playback");
     auto *afterGroup = new QActionGroup(afterMenu);
     const QString after = QSettings().value("afterPlayback", "nothing").toString();
@@ -479,6 +552,7 @@ Player::Player()
     connect(chapterMenu, &QMenu::aboutToShow, this, &Player::rebuildChapterMenu);
     act(play, "Next Chapter", QKeySequence("Ctrl+PgDown"), [this] { command({"add", "chapter", "1"}); });
     act(play, "Previous Chapter", QKeySequence("Ctrl+PgUp"), [this] { command({"add", "chapter", "-1"}); });
+    act(play, "Skip Intro / Credits", QKeySequence("S"), [this] { skipIntro(); });
     play->addSeparator();
     audioMenu = play->addMenu("&Audio Track");
     subMenu = play->addMenu("S&ubtitle Track");
@@ -496,20 +570,22 @@ Player::Player()
         QSettings().setValue("audioNormalize", on);
         applyAudioFilters();
     });
+    checkable(audioOut, "&S/PDIF Passthrough (AC3/DTS)", QKeySequence(), QSettings().value("passthrough", false).toBool(), [this](bool on) { setPassthrough(on); });
     QMenu *eqMenu = audioOut->addMenu("&Equalizer");
-    auto *eqGroup = new QActionGroup(eqMenu);
-    const QString eq = QSettings().value("audioEq", "flat").toString();
-    for (auto [label, mode] : {std::pair{"&Flat", "flat"}, {"&Bass Boost", "bass"}, {"&Treble Boost", "treble"}, {"&Voice", "voice"}}) {
-        QAction *a = eqMenu->addAction(label);
-        a->setCheckable(true);
-        a->setChecked(eq == mode);
-        eqGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, mode] {
-            QSettings().setValue("audioEq", mode);
-            applyAudioFilters();
-        });
+    QAction *openEq = eqMenu->addAction("&Open Equalizer...");
+    connect(openEq, &QAction::triggered, this, &Player::openEqualizer);
+    eqMenu->addSeparator();
+    struct Preset { const char *name; QList<double> gains; };
+    const QList<Preset> presets = {
+        {"&Flat", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {"&Bass Boost", {6, 5, 3, 0, 0, 0, 0, 0, 0, 0}},
+        {"&Treble Boost", {0, 0, 0, 0, 0, 0, 0, 3, 4, 4}},
+        {"&Voice", {-2, -2, 0, 0, 2, 3, 4, 2, 0, 0}},
+    };
+    for (const Preset &pr : presets) {
+        QAction *a = eqMenu->addAction(pr.name);
+        connect(a, &QAction::triggered, this, [this, gains = pr.gains] { setEqGains(gains); });
     }
-
     favoritesMenu = menuBar()->addMenu("F&avorites");
     connect(favoritesMenu, &QMenu::aboutToShow, this, &Player::rebuildFavoritesMenu);
     QAction *addFav = new QAction(this);
@@ -836,6 +912,8 @@ void Player::playIndex(int i)
     command({"set", "video-crop", ""}); // crop is per file
     if (cropGroup)
         cropGroup->actions().first()->setChecked(true);
+    if (recordAct && recordAct->isChecked())
+        stopRecording(); // a recording follows one file, never two
     command({"loadfile", url.toUtf8()});
     addRecent(source);
     folderNeighbors[0] = folderNeighbors[1] = QString();
@@ -966,6 +1044,171 @@ void Player::stop()
     updateTime(0);
 }
 
+// View > Video > Scaling: mpv's upscaler, applied to every file.
+void Player::setScale(const QString &filter)
+{
+    QSettings().setValue("scale", filter);
+    command({"set", "scale", filter.toUtf8()});
+}
+
+void Player::setToneMap(bool on)
+{
+    QSettings().setValue("toneMap", on);
+    command({"set", "tone-mapping", on ? "auto" : "clip"});
+}
+
+// Passthrough sends AC3/DTS/TrueHD to the device undecoded. A device that can't take it
+// gives silence or garbled sound, so it stays off unless the user turns it on.
+void Player::setPassthrough(bool on)
+{
+    QSettings().setValue("passthrough", on);
+    command({"set", "audio-spdif", on ? "ac3,eac3,dts,dts-hd,truehd" : ""});
+}
+
+// Skips the current chapter when its title marks it as an intro or credits.
+void Player::skipIntro()
+{
+    const int n = prop("chapter-list/count").toInt();
+    const int c = prop("chapter").toInt();
+    if (n == 0 || c < 0 || c >= n) {
+        osd("No chapters in this file");
+        return;
+    }
+    const QString title = prop(QByteArray("chapter-list/") + QByteArray::number(c) + "/title");
+    static const QRegularExpression skippable("intro|opening|recap|credit|ending", QRegularExpression::CaseInsensitiveOption);
+    if (!skippable.match(title).hasMatch()) {
+        osd("Not an intro or credits chapter");
+        return;
+    }
+    if (c + 1 < n)
+        command({"set", "chapter", QByteArray::number(c + 1)});
+    else
+        command({"seek", "100", "absolute-percent"}); // credits run to the end
+    osd("Skipped " + title);
+}
+
+// Bookmarks are times inside one file. One shared list, each entry tagged with its path.
+void Player::addBookmark()
+{
+    if (stopped || current < 0)
+        return;
+    const QString path = playlist->item(current)->data(Qt::UserRole + 1).toString();
+    QStringList list = {QString::number(prop("time-pos").toDouble(), 'f', 1) + "\t" + path};
+    list += QSettings().value("bookmarks").toStringList();
+    QSettings().setValue("bookmarks", list.mid(0, 500));
+    statusBar()->showMessage("Bookmark added", 3000);
+}
+
+void Player::rebuildBookmarksMenu()
+{
+    bookmarksMenu->clear();
+    const QString path = stopped || current < 0 ? QString() : playlist->item(current)->data(Qt::UserRole + 1).toString();
+    QAction *add = bookmarksMenu->addAction("&Add Bookmark");
+    add->setEnabled(!stopped);
+    connect(add, &QAction::triggered, this, &Player::addBookmark);
+    bookmarksMenu->addSeparator();
+    int shown = 0;
+    for (const QString &e : QSettings().value("bookmarks").toStringList()) {
+        const int tab = e.indexOf('\t');
+        if (e.mid(tab + 1) != path)
+            continue;
+        const double secs = e.left(tab).toDouble();
+        QAction *a = bookmarksMenu->addAction(fmtTime(secs));
+        connect(a, &QAction::triggered, this, [this, secs] { command({"seek", QByteArray::number(secs), "absolute"}); });
+        ++shown;
+    }
+    if (!shown) {
+        bookmarksMenu->addAction("No Bookmarks for This File")->setEnabled(false);
+        return;
+    }
+    bookmarksMenu->addSeparator();
+    QAction *clear = bookmarksMenu->addAction("&Clear Bookmarks for This File");
+    connect(clear, &QAction::triggered, this, [path] {
+        QStringList kept;
+        for (const QString &e : QSettings().value("bookmarks").toStringList())
+            if (e.mid(e.indexOf('\t') + 1) != path)
+                kept << e;
+        QSettings().setValue("bookmarks", kept);
+    });
+}
+
+// mpv copies the stream without re-encoding. It is experimental: the file is written when
+// recording stops, and a recording started mid-file can start with undecodable frames.
+void Player::startRecording(const QString &path)
+{
+    command({"set", "stream-record", path.toUtf8()});
+    QSignalBlocker block(recordAct);
+    recordAct->setChecked(true);
+    osd("Recording to " + QFileInfo(path).fileName() + ", saved when you stop");
+}
+
+void Player::stopRecording()
+{
+    command({"set", "stream-record", ""});
+    QSignalBlocker block(recordAct);
+    recordAct->setChecked(false);
+    osd("Recording stopped");
+}
+
+// The visualiser draws a spectrum as the video of a file that has no video (audio files).
+// The spectrum is the output of mpv's filter graph, so "vid" can read "no" while it runs.
+// The file's own track list says whether there is real video.
+void Player::applyVisualizer()
+{
+    bool video = false;
+    const int n = prop("track-list/count").toInt();
+    for (int i = 0; i < n && !video; ++i)
+        video = prop(QByteArray("track-list/") + QByteArray::number(i) + "/type") == "video";
+    const bool wanted = QSettings().value("visualizer", false).toBool() && !stopped && !video;
+    command({"set", "lavfi-complex", wanted ? "[aid1]asplit[ao][v];[v]showspectrum=s=640x360[vo]" : ""});
+}
+
+// Cuts the A-B section out of the current local file with ffmpeg. Cuts start on the
+// keyframe at or before A, so the section can begin a little early.
+void Player::saveAbSection(const QString &out)
+{
+    const double a = prop("ab-loop-a").toDouble();
+    const double b = prop("ab-loop-b").toDouble();
+    const QString src = playlist->item(current)->data(Qt::UserRole + 1).toString();
+    if (b <= a || !QFileInfo(src).isFile()) {
+        osd("The section needs a local file and B after A");
+        return;
+    }
+    auto *ff = new QProcess(this);
+    connect(ff, &QProcess::finished, this, [this, ff, out](int code, QProcess::ExitStatus) {
+        osd(code == 0 ? "Saved section " + QFileInfo(out).fileName() : "Saving the section failed");
+        ff->deleteLater();
+    });
+    connect(ff, &QProcess::errorOccurred, this, [this, ff](QProcess::ProcessError) {
+        osd("Could not run ffmpeg");
+        ff->deleteLater();
+    });
+    ff->start("ffmpeg", {"-v", "error", "-y", "-ss", QString::number(a, 'f', 3), "-i", src,
+                         "-t", QString::number(b - a, 'f', 3), "-c", "copy", "-avoid_negative_ts", "make_zero", out});
+}
+
+void Player::startScreenshotSeries(int seconds)
+{
+    if (!seriesTimer) {
+        seriesTimer = new QTimer(this);
+        connect(seriesTimer, &QTimer::timeout, this, [this] {
+            if (!stopped)
+                screenshot(autoScreenshotPath());
+        });
+    }
+    seriesTimer->start(seconds * 1000);
+    osd(QString("Screenshot every %1 s").arg(seconds));
+}
+
+void Player::stopScreenshotSeries()
+{
+    if (seriesTimer)
+        seriesTimer->stop();
+    QSignalBlocker block(seriesAct);
+    seriesAct->setChecked(false);
+    osd("Screenshot series stopped");
+}
+
 void Player::applyChrome(bool fullscreen)
 {
     menuBar()->setVisible(!fullscreen && !hideMenu);
@@ -1042,12 +1285,25 @@ void Player::openVideoAdjust()
 
 void Player::rotateVideo(int by)
 {
-    command({"set", "video-rotate", QByteArray::number((qRound(prop("video-rotate").toDouble()) + by + 360) % 360)});
+    const int r = (qRound(prop("video-rotate").toDouble()) + by + 360) % 360;
+    command({"set", "video-rotate", QByteArray::number(r)});
+    QSettings().setValue("video/rotate", r);
+}
+
+// Adds or removes a labelled video filter. Safe to call again with the same state, so
+// reapplying saved settings never stacks a second copy of the filter.
+void Player::setVideoFilter(const char *label, const char *filter, bool on)
+{
+    command({"vf", "remove", QByteArray("@") + label});
+    if (on)
+        command({"vf", "add", QByteArray("@") + label + ":" + filter});
+    QSettings().setValue(QString("video/") + label, on);
 }
 
 // Crops the source to an aspect ratio, centred. 0 turns cropping off.
 void Player::setCrop(double aspect)
 {
+    QSettings().setValue("video/crop", aspect);
     if (aspect <= 0 || srcSize.isEmpty()) {
         command({"set", "video-crop", ""});
         return;
@@ -1062,21 +1318,89 @@ void Player::setCrop(double aspect)
              QByteArray::number((w - cw) / 2) + "+" + QByteArray::number((h - ch) / 2)});
 }
 
-// Normalizer and equalizer as one mpv audio filter chain; both are remembered.
+// Normalizer, 10-band equalizer, compressor and stereo widen, as one mpv audio filter chain.
+// Bands above 45% of the file's sample rate are skipped, because ffmpeg rejects them.
+static const QList<double> eqBandHz = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+
 void Player::applyAudioFilters()
 {
     QSettings s;
-    const QString eq = s.value("audioEq", "flat").toString();
     QStringList filters;
     if (s.value("audioNormalize", false).toBool())
         filters << "lavfi=[dynaudnorm]";
-    if (eq == "bass")
-        filters << "lavfi=[bass=g=6]";
-    else if (eq == "treble")
-        filters << "lavfi=[treble=g=5]";
-    else if (eq == "voice")
-        filters << "lavfi=[equalizer=f=2500:t=q:w=1.2:g=4]";
+    if (s.value("eq/enabled", false).toBool()) {
+        const QStringList gains = s.value("eq/gains").toStringList();
+        const double rate = prop("audio-params/samplerate").toDouble();
+        for (int i = 0; i < eqBandHz.size(); ++i) {
+            const double g = gains.value(i).toDouble();
+            if (g == 0 || (rate > 0 && eqBandHz[i] > rate * 0.45))
+                continue;
+            filters << QString("lavfi=[equalizer=f=%1:t=o:w=1:g=%2]").arg(eqBandHz[i]).arg(g);
+        }
+    }
+    if (s.value("eq/compressor", false).toBool())
+        filters << "lavfi=[acompressor]";
+    if (s.value("eq/widen", false).toBool())
+        filters << "lavfi=[extrastereo=m=2.5]";
     mpv_set_property_string(mpv, "af", filters.join(',').toUtf8().constData());
+}
+
+void Player::setEqGains(const QList<double> &gains)
+{
+    QStringList saved;
+    for (double g : gains)
+        saved << QString::number(g);
+    QSettings().setValue("eq/gains", saved);
+    QSettings().setValue("eq/enabled", true);
+    applyAudioFilters();
+}
+
+void Player::openEqualizer()
+{
+    QDialog d(this);
+    d.setWindowTitle("Equalizer");
+    auto *grid = new QGridLayout(&d);
+    QStringList gains = QSettings().value("eq/gains").toStringList();
+    gains.resize(eqBandHz.size());
+    for (int i = 0; i < eqBandHz.size(); ++i) {
+        auto *s = new QSlider(Qt::Vertical);
+        s->setObjectName(QString("band%1").arg(i));
+        s->setRange(-12, 12);
+        s->setValue(qRound(gains[i].toDouble()));
+        connect(s, &QSlider::valueChanged, &d, [this, i](int v) {
+            QStringList g = QSettings().value("eq/gains").toStringList();
+            g.resize(eqBandHz.size());
+            g[i] = QString::number(v);
+            QSettings().setValue("eq/gains", g);
+            applyAudioFilters();
+        });
+        const double hz = eqBandHz[i];
+        grid->addWidget(s, 0, i, Qt::AlignHCenter);
+        grid->addWidget(new QLabel(hz >= 1000 ? QString::number(hz / 1000) + "k" : QString::number(hz)), 1, i, Qt::AlignHCenter);
+    }
+    auto addCheck = [&](int row, const char *name, const char *text, const char *key) {
+        auto *c = new QCheckBox(text);
+        c->setObjectName(name);
+        c->setChecked(QSettings().value(key).toBool());
+        connect(c, &QCheckBox::toggled, &d, [this, key](bool on) {
+            QSettings().setValue(key, on);
+            applyAudioFilters();
+        });
+        grid->addWidget(c, row, 0, 1, eqBandHz.size());
+    };
+    addCheck(2, "eqEnabled", "Equalizer enabled", "eq/enabled");
+    addCheck(3, "eqCompressor", "Compressor", "eq/compressor");
+    addCheck(4, "eqWiden", "Stereo widen", "eq/widen");
+    auto *reset = new QPushButton("Reset");
+    connect(reset, &QPushButton::clicked, &d, [&d] {
+        for (QSlider *s : d.findChildren<QSlider *>())
+            s->setValue(0);
+    });
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    grid->addWidget(reset, 5, 0, 1, eqBandHz.size());
+    grid->addWidget(buttons, 6, 0, 1, eqBandHz.size());
+    d.exec();
 }
 
 void Player::rebuildAudioDeviceMenu()
@@ -1250,6 +1574,15 @@ void Player::handleEvents()
         } else if (ev->event_id == MPV_EVENT_FILE_LOADED) {
             statusLabel->setText(prop("pause") == "yes" ? "Paused" : "Playing");
             srcSize = QSize(prop("video-params/w").toInt(), prop("video-params/h").toInt());
+            applyAudioFilters(); // band limits depend on this file's sample rate
+            applyVisualizer();
+            if (cropGroup) { // the remembered crop applies to every file
+                const double saved = QSettings().value("video/crop", 0.0).toDouble();
+                for (QAction *a : cropGroup->actions())
+                    if (a->data().toDouble() == saved)
+                        a->setChecked(true);
+                setCrop(saved);
+            }
             if (pendingSeek >= 0) {
                 command({"seek", QByteArray::number(pendingSeek), "absolute"});
                 pendingSeek = -1;

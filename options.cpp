@@ -73,6 +73,14 @@ void Player::applySettings()
     if (s.contains("audioDevice"))
         mpv_set_property_string(mpv, "audio-device", s.value("audioDevice").toString().toUtf8().constData());
     applyAudioFilters();
+    setScale(s.value("scale", "bilinear").toString());
+    setToneMap(s.value("toneMap", true).toBool());
+    setPassthrough(s.value("passthrough", false).toBool());
+    setVideoFilter("flip", "hflip", s.value("video/flip", false).toBool());
+    setVideoFilter("denoise", "hqdn3d", s.value("video/denoise", false).toBool());
+    setVideoFilter("sharpen", "unsharp", s.value("video/sharpen", false).toBool());
+    mpv_set_property_string(mpv, "deinterlace", s.value("video/deinterlace", false).toBool() ? "yes" : "no");
+    mpv_set_property_string(mpv, "video-rotate", QByteArray::number(s.value("video/rotate", 0).toInt()).constData());
     applyTheme(s.value("darkTheme", true).toBool());
     for (QAction *a : hotkeyActions(this))
         a->setShortcut(s.value("keys/" + a->objectName(), a->property("defaultKey")).value<QKeySequence>());

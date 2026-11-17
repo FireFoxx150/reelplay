@@ -15,7 +15,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 ```bash
 cmake --build build --target package
-sudo apt install ./build/reelplay_0.5.0_amd64.deb
+sudo apt install ./build/reelplay_0.7.0_amd64.deb
 ```
 
 Adds a menu entry and an icon, and offers reelplay under "Open With" for video and audio
@@ -36,6 +36,33 @@ folder" (off by default).
   (Flat, Bass Boost, Treble Boost, Voice).
 - **Play > After Playback:** do nothing, exit, shut down or suspend when the playlist ends.
 - **Favorites:** remember a file at its current position and jump back to it later.
+
+## Video, audio and bookmarks (0.6.0)
+
+- **View > Video > Scaling:** default, sharp (EWA Lanczos) or smooth (Spline36) upscaling.
+- **View > Video:** HDR tone mapping on or off, denoise, and sharpen.
+- **Play > Audio Output > S/PDIF Passthrough:** sends AC3, E-AC3, DTS and TrueHD to a
+  receiver undecoded. It is off by default. On a stereo device it gives silence or garbled
+  sound, so only turn it on with a receiver connected to the output you have selected.
+- **Play > Bookmarks:** remember times inside a file and jump back to them.
+- **Play > Record Stream (Experimental):** copies the stream to a file. mpv marks this
+  feature experimental: the file is written when recording stops, and a recording started
+  partway through can have frames that won't decode. Start it at the beginning of the file.
+  Changing file ends the recording.
+
+## Equaliser, visualiser, screenshots and sections (0.7.0)
+
+- **Play > Audio Output > Equalizer > Open Equalizer:** 10 bands (31 Hz to 16 kHz, -12 to
+  +12 dB), with a compressor and stereo widen. Presets set the bands. Bands above 45% of a
+  file's sample rate are skipped, because ffmpeg rejects them.
+- **View > Visualizer (audio files):** draws a spectrum where the picture would be, for
+  files with no video.
+- **File > Screenshot Series:** saves a screenshot every N seconds to the screenshot folder.
+- **Play > A-B Repeat > Save Section:** cuts the A-B section to a new file with ffmpeg. The
+  cut starts at the keyframe before A, so the section can begin a little early. Needs ffmpeg
+  on the system.
+- Denoise, sharpen, rotation, flip, deinterlace and the crop choice are remembered between
+  sessions. A crop applies to every file.
 
 ## Subtitles
 
@@ -107,6 +134,8 @@ the Wayland code path on X11: `REELPLAY_RENDER=gl ./build/reelplay`.
 | Ctrl+0 / Ctrl+1 / Ctrl+2 | Hide menu bar / controls / status bar |
 | Ctrl+J | Statistics overlay (codec, size, dropped frames, sync) |
 | Ctrl+Shift+F | Add the current file to Favorites |
+| Ctrl+B | Add a bookmark at the current time (Play > Bookmarks lists this file's) |
+| S | Skip the current chapter if it is an intro or credits (by its title) |
 | Ctrl+C | Close file |
 | Alt+X | Exit |
 

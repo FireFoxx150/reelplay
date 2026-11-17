@@ -58,10 +58,25 @@ private:
     void rotateVideo(int by);
     void setCrop(double aspect);
     void applyAudioFilters();
+    void applyVisualizer();
+    void saveAbSection(const QString &out);
+    void startScreenshotSeries(int seconds);
+    void stopScreenshotSeries();
+    void setEqGains(const QList<double> &gains);
+    void openEqualizer();
     void rebuildAudioDeviceMenu();
     void finishPlaylist();
     void addFavorite();
     void rebuildFavoritesMenu();
+    void setScale(const QString &filter);
+    void setToneMap(bool on);
+    void setPassthrough(bool on);
+    void setVideoFilter(const char *label, const char *filter, bool on);
+    void skipIntro();
+    void addBookmark();
+    void rebuildBookmarksMenu();
+    void startRecording(const QString &path);
+    void stopRecording();
     void play();
     void pause();
     void stop();
@@ -99,6 +114,10 @@ private:
     QSize srcSize;                     // the file's size before any crop
     double pendingSeek = -1;           // favorites: seek here once the file has loaded
     bool hideMenu = false, hideControls = false, hideStatus = false;
+    QAction *recordAct = nullptr;    // Play > Record Stream
+    QAction *seriesAct = nullptr;    // File > Screenshot Series
+    QTimer *seriesTimer = nullptr;
+    QMenu *bookmarksMenu = nullptr;  // Play > Bookmarks
     int current = -1;
     QList<double> chapters; // start times in seconds
     QString folderNeighbors[2]; // previous/next file in the folder of a lone playlist entry

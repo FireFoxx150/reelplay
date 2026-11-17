@@ -1137,12 +1137,29 @@ private slots:
         trigger("&Normalize Volume");
         QTRY_VERIFY(p->prop("af").contains("dynaudnorm"));
         trigger("&Bass Boost");
-        QTRY_VERIFY(p->prop("af").contains("bass"));
-        QVERIFY(p->prop("af").contains("dynaudnorm")); // normalizer stays on
+        QTRY_VERIFY(p->prop("af").contains("equalizer=f=31"));
+        QVERIFY(p->prop("af").contains("dynaudnorm")); // the normalizer stays on
         trigger("&Flat");
-        QTRY_VERIFY(!p->prop("af").contains("bass"));
+        QTRY_VERIFY(!p->prop("af").contains("equalizer"));
         trigger("&Normalize Volume");
         QTRY_VERIFY(p->prop("af").isEmpty());
+    }
+
+    void equalizerDialog()
+    {
+        startClips();
+        onModal([](QDialog *d) {
+            d->findChild<QCheckBox *>("eqEnabled")->setChecked(true);
+            d->findChild<QSlider *>("band8")->setValue(-4); // 8 kHz
+            d->findChild<QCheckBox *>("eqCompressor")->setChecked(true);
+            d->findChild<QCheckBox *>("eqWiden")->setChecked(true);
+            d->accept();
+        });
+        trigger("&Open Equalizer...");
+        QTRY_VERIFY(p->prop("af").contains("equalizer=f=8000"));
+        QVERIFY(p->prop("af").contains("acompressor"));
+        QVERIFY(p->prop("af").contains("extrastereo"));
+        QCOMPARE(QSettings().value("eq/gains").toStringList().value(8), QString("-4"));
     }
 
     void audioDevice()
@@ -1197,6 +1214,191 @@ private slots:
         QVERIFY(entry);
         entry->trigger();
         QTRY_VERIFY_WITH_TIMEOUT(p->playlist->item(0)->text() == "a.mkv" && qAbs(pos() - 30) < 3, 8000);
+    }
+
+    bool hasAction(QMenu *m, const QString &text)
+    {
+        for (QAction *a : m->actions())
+            if (a->text() == text)
+                return true;
+        return false;
+    }
+
+    void videoFilters()
+    {
+        startClips();
+        trigger("S&mooth (Spline36)");
+        QTRY_COMPARE(p->prop("scale"), QString("spline36"));
+        QCOMPARE(QSettings().value("scale").toString(), QString("spline36"));
+        trigger("&HDR Tone Mapping");
+        QTRY_COMPARE(p->prop("tone-mapping"), QString("clip"));
+        trigger("&HDR Tone Mapping");
+        QTRY_COMPARE(p->prop("tone-mapping"), QString("auto"));
+        trigger("&Denoise");
+        QTRY_VERIFY(p->prop("vf").contains("hqdn3d"));
+        trigger("&Sharpen");
+        QTRY_VERIFY(p->prop("vf").contains("unsharp"));
+        trigger("&Denoise");
+        QTRY_VERIFY(!p->prop("vf").contains("hqdn3d"));
+        QVERIFY(p->prop("vf").contains("unsharp")); // sharpen stays on
+    }
+
+    // Undecoded passthrough can silence a stereo device, so it must start off.
+    void passthroughIsOptIn()
+    {
+        startClips();
+        QCOMPARE(p->prop("audio-spdif"), QString(""));
+        trigger("&S/PDIF Passthrough (AC3/DTS)");
+        QTRY_VERIFY(p->prop("audio-spdif").contains("ac3"));
+        QCOMPARE(QSettings().value("passthrough").toBool(), true);
+        trigger("&S/PDIF Passthrough (AC3/DTS)");
+        QTRY_COMPARE(p->prop("audio-spdif"), QString(""));
+    }
+
+    void skipIntroChapter()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to write chapter titles");
+        QString meta = writeFile("chapters.txt",
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=20000\ntitle=Intro\n"
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=20000\nEND=60000\ntitle=Main story\n");
+        QString out = tmp.filePath("chaptered.mkv");
+        QProcess ff;
+        ff.start("ffmpeg", {"-v", "error", "-y", "-i", clipA, "-i", meta, "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", out});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
+        p->openFiles({out});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_COMPARE(p->chapters.size(), 2);
+        key("S");
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(pos() - 20) < 1.5, 5000); // the intro is skipped
+        QTest::qWait(500);
+        key("S"); // "Main story" is not skippable: nothing moves
+        QTest::qWait(300);
+        QVERIFY(pos() > 19 && pos() < 26);
+    }
+
+    void bookmarksPerFile()
+    {
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"seek", "20", "absolute"});
+        QTRY_VERIFY(qAbs(pos() - 20) < 2);
+        key("Ctrl+B");
+        QCOMPARE(QSettings().value("bookmarks").toStringList().size(), 1);
+        p->openFiles({clipB});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        emit p->bookmarksMenu->aboutToShow();
+        QVERIFY(!hasAction(p->bookmarksMenu, "00:00:20")); // the bookmark belongs to clipA
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        emit p->bookmarksMenu->aboutToShow();
+        QVERIFY(hasAction(p->bookmarksMenu, "00:00:20"));
+        p->command({"seek", "2", "absolute"});
+        QTRY_VERIFY(pos() < 5);
+        for (QAction *a : p->bookmarksMenu->actions())
+            if (a->text() == "00:00:20")
+                a->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(pos() - 20) < 2, 5000);
+    }
+
+    void recordStream()
+    {
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        const QString path = tmp.filePath("recorded.mkv");
+        p->startRecording(path);
+        QCOMPARE(p->prop("stream-record"), path);
+        QVERIFY(p->recordAct->isChecked());
+        QTest::qWait(2000);
+        p->stopRecording();
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo(path).size() > 0, 5000); // mpv writes the file on stop
+        QCOMPARE(p->prop("stream-record"), QString(""));
+        QVERIFY(!p->recordAct->isChecked());
+        // Changing file ends a recording: one recording never spans two files.
+        p->startRecording(tmp.filePath("second.mkv"));
+        p->openFiles({clipB});
+        QTRY_COMPARE(p->prop("stream-record"), QString(""));
+        QVERIFY(!p->recordAct->isChecked());
+    }
+
+    bool cropChecked(const QString &text)
+    {
+        for (QAction *a : p->findChildren<QAction *>())
+            if (a->text() == text && a->isChecked())
+                return true;
+        return false;
+    }
+
+    void videoChoicesPersist()
+    {
+        startClips();
+        trigger("Rotate &Clockwise");
+        trigger("Flip &Horizontal");
+        trigger("&Denoise");
+        trigger("&Deinterlace");
+        trigger("Crop 16:9");
+        QTRY_VERIFY(p->prop("vf").contains("hflip"));
+        p->close();
+        newPlayer();
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QCOMPARE(p->prop("video-rotate").toInt(), 90);
+        QVERIFY(p->prop("vf").contains("hflip"));
+        QVERIFY(p->prop("vf").contains("hqdn3d"));
+        QCOMPARE(p->prop("deinterlace"), QString("yes"));
+        QTRY_COMPARE_WITH_TIMEOUT(p->prop("video-crop"), QString("320x180+0+30"), 5000);
+        QVERIFY(cropChecked("Crop 16:9"));
+        // Reapplying the saved settings must not stack a second copy of a filter.
+        p->applySettings();
+        QCOMPARE(p->prop("vf").count("hflip"), 1);
+    }
+
+    void visualizerForAudioOnly()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to make an audio-only file");
+        const QString mp3 = tmp.filePath("tone.mp3");
+        QProcess ff;
+        ff.start("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=6:sample_rate=44100", "-c:a", "libmp3lame", mp3});
+        QVERIFY(ff.waitForFinished(60000));
+        QCOMPARE(ff.exitCode(), 0);
+        trigger("&Visualizer (audio files)");
+        p->openFiles({mp3});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(p->prop("video-params/w").toInt(), 640, 5000);
+        // A file with real video is left alone.
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        QTRY_COMPARE(p->prop("lavfi-complex"), QString(""));
+    }
+
+    void abSectionSave()
+    {
+        if (QStandardPaths::findExecutable("ffmpeg").isEmpty())
+            QSKIP("ffmpeg is needed to cut the section");
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->command({"set", "ab-loop-a", "2"});
+        p->command({"set", "ab-loop-b", "6"});
+        QTRY_COMPARE(p->prop("ab-loop-b").toDouble(), 6.0); // markers are applied asynchronously
+        QTRY_COMPARE(p->prop("ab-loop-a").toDouble(), 2.0);
+        const QString out = tmp.filePath("section.mkv");
+        p->saveAbSection(out);
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo(out).size() > 0, 20000);
+    }
+
+    void screenshotSeries()
+    {
+        const QString dir = tmp.filePath("series");
+        QSettings().setValue("screenshotDir", dir);
+        p->openFiles({clipA});
+        QTRY_COMPARE_WITH_TIMEOUT(status(), QString("Playing"), 5000);
+        p->startScreenshotSeries(1);
+        QTest::qWait(2600);
+        p->stopScreenshotSeries();
+        QVERIFY(QDir(dir).entryList({"*.png"}, QDir::Files).size() >= 2);
+        QVERIFY(!p->seriesTimer->isActive());
     }
 };
 
